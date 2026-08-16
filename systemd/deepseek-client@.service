@@ -1,0 +1,21 @@
+[Unit]
+Description=DeepSeek AI tunnel client (local TLS tunnel endpoint)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The client binds LOCAL ports that AI tools connect to. If those are < 1024,
+# run as root or set capabilities. For > 1024 (typical), use a normal user.
+User=%i
+Group=%i
+ExecStart=/usr/local/bin/deepseek-client -config /etc/deepseek/client.json
+Restart=always
+RestartSec=5
+# Hardening (Linux)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

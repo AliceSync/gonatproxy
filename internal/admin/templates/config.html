@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配置 - DeepSeek Tunnel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config" class="active">配置</a><a href="/logout">退出</a></div>
+  </nav>
+  <main class="container">
+    <div class="page-head">
+      <h2>服务端配置</h2>
+      <div class="head-actions">
+        <a class="btn btn-ghost" href="/api/export/client">导出 client 配置</a>
+        <a class="btn btn-ghost" href="/api/export/nat">导出 natclient 配置</a>
+      </div>
+    </div>
+
+    <div id="alert" class="alert hidden"></div>
+
+    <section class="panel">
+      <h3>基础</h3>
+      <div class="grid2">
+        <label>中继监听地址
+          <input data-f="listen" type="text" value="">
+        </label>
+        <label>公网地址（用于导出，host:port）
+          <input data-f="public_addr" type="text" value="">
+        </label>
+        <label>证书文件 cert_file
+          <input data-f="cert_file" type="text" value="">
+        </label>
+        <label>私钥文件 key_file
+          <input data-f="key_file" type="text" value="">
+        </label>
+        <label>证书检查秒数
+          <input data-f="cert_check_seconds" type="number" min="5" value="">
+        </label>
+        <label>目标拨号超时秒数
+          <input data-f="dial_timeout_seconds" type="number" min="1" value="">
+        </label>
+        <label>日志文件（daemon 模式）
+          <input data-f="log_file" type="text" value="">
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>路由（入口端口 → 目标）</h3>
+      <div id="routeRows"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addRoute()">+ 添加路由</button>
+    </section>
+
+    <section class="panel">
+      <h3>NAT 客户端（id → secret + 服务）</h3>
+      <div id="clientRows"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addClient()">+ 添加 NAT 客户端</button>
+    </section>
+
+    <section class="panel">
+      <h3>控制台 / 管理员</h3>
+      <div class="grid2">
+        <label>控制台监听地址
+          <input data-f="admin.listen" type="text" value="">
+        </label>
+        <label class="check-row">
+          <input data-f="admin.tls" type="checkbox"> 控制台启用 TLS
+        </label>
+        <label>证书文件（控制台 TLS）
+          <input data-f="admin.cert_file" type="text" value="">
+        </label>
+        <label>私钥文件（控制台 TLS）
+          <input data-f="admin.key_file" type="text" value="">
+        </label>
+        <label>管理员用户名 <input data-f="admin.username" type="text" value=""></label>
+        <label>新密码（留空不修改）
+          <input data-f="admin.newpassword" type="password" autocomplete="new-password" value="">
+        </label>
+      </div>
+      <p class="muted">修改密码后请务必牢记；用户名与密码用于登录控制台。</p>
+    </section>
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="save()">保存配置</button>
+      <a class="btn btn-ghost" href="/dashboard">取消</a>
+    </div>
+  </main>
+
+<script src="/static/config.js"></script>
+</body>
+</html>

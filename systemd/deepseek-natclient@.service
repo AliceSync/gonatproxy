@@ -1,0 +1,21 @@
+[Unit]
+Description=DeepSeek AI tunnel NAT client (expose local services through server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# One instance per NAT host: enable as deepseek-natclient@<client_id>.
+# Config path is /etc/deepseek/natclient-<client_id>.json.
+User=deepseek
+Group=deepseek
+ExecStart=/usr/local/bin/deepseek-natclient -config /etc/deepseek/natclient-%i.json
+Restart=always
+RestartSec=5
+# Hardening (Linux)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

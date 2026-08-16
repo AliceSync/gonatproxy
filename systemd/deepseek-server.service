@@ -1,0 +1,25 @@
+# Server systemd unit runs the server in the foreground as a service.
+# All management (login, routes, NAT clients, export) happens in the web
+# console (default http://127.0.0.1:8444).
+[Unit]
+Description=DeepSeek AI tunnel server (TLS relay hub + web console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deepseek
+Group=deepseek
+ExecStart=/usr/local/bin/deepseek-server run -config /etc/deepseek/server.json
+Restart=always
+RestartSec=3
+# ACME writes certs; the server only reads them. Log to journald.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/etc/deepseek
+# The admin console listens on loopback by default (see admin.listen).
+
+[Install]
+WantedBy=multi-user.target

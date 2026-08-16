@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek Tunnel 控制台 - 登录</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-card">
+    <div class="brand">
+      <div class="logo">◈</div>
+      <div>
+        <h1>DeepSeek Tunnel</h1>
+        <p>管理控制台</p>
+      </div>
+    </div>
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    <form method="post" action="/login" class="form">
+      <input type="hidden" name="captcha_token" id="captcha_token">
+      <label>用户名
+        <input type="text" name="username" autocomplete="username" required>
+      </label>
+      <label>密码
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <label class="captcha-row">
+        <span>验证码</span>
+        <img id="captcha_img" src="/captcha" alt="验证码" title="点击刷新">
+        <input type="text" name="captcha" class="captcha-input" autocomplete="off" required placeholder="输入图中字符">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">登 录</button>
+    </form>
+  </div>
+  <script>
+    const img = document.getElementById('captcha_img');
+    const tokenIn = document.getElementById('captcha_token');
+    function refresh(onToken) {
+      fetch('/captcha').then(r => {
+        const t = r.headers.get('X-Captcha-Token');
+        if (t) tokenIn.value = t;
+        return r.blob();
+      }).then(b => { img.src = URL.createObjectURL(b); });
+    }
+    img.addEventListener('click', refresh);
+    refresh(); // load a token+image on page load
+  </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "listen": ":8443",
+  "cert_file": "/etc/deepseek/certs/server.crt",
+  "key_file": "/etc/deepseek/certs/server.key",
+  "cert_check_seconds": 30,
+  "dial_timeout_seconds": 10,
+  "log_file": "/var/log/deepseek/server.log",
+  "public_addr": "YOUR_SERVER_IP:8443",
+  "admin": {
+    "listen": "127.0.0.1:8444"
+  },
+  "clients": {
+    "nat-home": {
+      "secret": "CHANGE_ME_secret",
+      "services": [
+        { "name": "dashboard", "port": 8080, "addr": "127.0.0.1:8080" },
+        { "name": "api", "port": 8081, "addr": "127.0.0.1:8081" }
+      ]
+    }
+  },
+  "routes": [
+    { "name": "deepseek", "listen_port": 5051, "target": "127.0.0.1:8000" },
+    { "name": "lmstudio", "listen_port": 5052, "target": "127.0.0.1:1234" },
+    { "name": "home-dash", "listen_port": 8080, "nat_client": "nat-home", "service": "dashboard" },
+    { "name": "home-api", "listen_port": 8081, "nat_client": "nat-home", "service": "api" }
+  ]
+}

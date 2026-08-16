@@ -1,0 +1,8 @@
+{
+  "server": "YOUR_SERVER_IP:8443",
+  "ca_file": "/etc/deepseek/certs/ca.crt",
+  "server_fingerprint": "",
+  "insecure_skip_verify": false,
+  "server_name": "",
+  "reconnect_delay_seconds": 5
+}

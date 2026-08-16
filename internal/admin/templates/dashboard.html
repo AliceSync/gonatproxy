@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek Tunnel 控制台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links">
+      <a href="/dashboard" class="active">概览</a>
+      <a href="/config">配置</a>
+      <a href="/logout">退出</a>
+    </div>
+  </nav>
+  <main class="container">
+    <h2>服务概览</h2>
+    <p class="muted">管理入口与隧道服务状态</p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">中继监听</div>
+        <div class="card-value">{{.Config.Listen}}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Web 控制台</div>
+        <div class="card-value">{{.Config.Admin.Listen}}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">路由数</div>
+        <div class="card-value">{{len .Config.Routes}}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">NAT 客户端</div>
+        <div class="card-value">{{len .Config.Clients}}</div>
+      </div>
+    </div>
+
+    <section class="panel">
+      <h3>转发路由</h3>
+      <table>
+        <thead><tr><th>名称</th><th>入口端口</th><th>目的地</th></tr></thead>
+        <tbody>
+        {{range .Config.Routes}}
+          <tr>
+            <td>{{.Name}}</td>
+            <td>{{.ListenPort}}</td>
+            <td>
+              {{if .Target}}{{.Target}}{{else}}NAT: <code>{{.NatClient}}</code> → <code>{{.Service}}</code>{{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h3>NAT 客户端</h3>
+      {{if .Config.Clients}}
+      <table>
+        <thead><tr><th>客户端 ID</th><th>暴露服务</th></tr></thead>
+        <tbody>
+        {{range $id, $nc := .Config.Clients}}
+          <tr>
+            <td><code>{{$id}}</code></td>
+            <td>
+              {{if $nc.Services}}
+                {{range $nc.Services}}<code>{{.Name}}@{{.Port}}</code> {{end}}
+              {{else}}<span class="muted">无</span>{{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}
+        <p class="muted">尚未配置 NAT 客户端</p>
+      {{end}}
+    </section>
+  </main>
+</body>
+</html>

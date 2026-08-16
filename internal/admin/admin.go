@@ -1,7 +1,8 @@
 // Package admin implements the web management console embedded in the server.
-// It provides captcha+username/password login, an initialization mode when no
-// account is configured, full configuration editing, and configuration export
-// for the entry client and NAT client.
+// It provides username/password login, an initialization mode when no
+// account is configured, full configuration editing, a file manager, a shell
+// terminal, service management, and binary update + restart, plus configuration
+// export for the entry client and NAT client.
 package admin
 
 import (
@@ -24,6 +25,61 @@ import (
 //go:embed templates static
 var content embed.FS
 
+// SystemHooks lets the host process provide privileged operations (restart,
+// binary update) to the console. Nil fields hide the corresponding UI.
+type SystemHooks struct {
+	// Version returns the running binary version string.
+	Version func() string
+	// Grace is the graceful shutdown grace period.
+	Grace time.Duration
+	// Restart triggers a graceful restart of the server process.
+	Restart func(grace time.Duration) error
+	// StageDir is where uploaded update binaries are staged.
+	StageDir string
+	// ApplyUpdate moves a staged binary over the running binary and, if
+	// restartNow, performs a graceful restart (fork start).
+	ApplyUpdate func(stagedPath string, restartNow bool) (string, error)
+	// SystemdUnit is the unit name when the server runs under systemd ("" otherwise).
+	SystemdUnit string
+	// Service provides systemd unit generation + lifecycle control. When nil the
+	// services page hides the generate/control UI.
+	Service *ServiceHooks
+}
+
+// ServiceInspect describes the current process/systemd state for the services
+// page (mirrors what the host knows).
+type ServiceInspect struct {
+	Unit      string `json:"unit"`
+	Installed bool   `json:"installed"`
+	Systemd   bool   `json:"systemd"` // systemd present on host
+	Managed   bool   `json:"managed"` // THIS process is a systemd service
+	Daemon    bool   `json:"daemon"`  // launched via `start` (background daemon, not systemd)
+	Exe       string `json:"exe"`
+	Config    string `json:"config"`
+	RunUser   string `json:"run_user"`
+	Version   string `json:"version"`
+}
+
+// ServiceResult is a service-control outcome returned to the browser.
+type ServiceResult struct {
+	OK         string `json:"ok"`
+	Restarting bool   `json:"restarting"`
+}
+
+// ServiceHooks lets the host provide systemd unit generation and lifecycle
+// control (enable separate from start, graceful handoff into systemd).
+type ServiceHooks struct {
+	// Inspect returns the current state.
+	Inspect func() ServiceInspect
+	// Generate writes the unit file based on the current executable + config
+	// path and runs daemon-reload. Returning the unit path.
+	Generate func() (ServiceResult, error)
+	// Control runs a lifecycle action: enable|disable|start|stop|restart|
+	// daemon-reload. start performs a graceful handoff when the process was
+	// launched via `start` (daemon) or foreground, so systemd takes over.
+	Control func(action string) (ServiceResult, error)
+}
+
 // Server is the web console.
 type Server struct {
 	ConfigPath string
@@ -34,10 +90,15 @@ type Server struct {
 	// ApplyConfig persists + applies a config document from the console.
 	ApplyConfig func(next *config.ServerConfig) error
 
+	// FileRoot restricts the file manager/terminal to a directory. Empty = whole
+	// filesystem. Set by the host to a sensible sandbox for the console.
+	FileRoot string
+	// Hooks provides privileged operations (restart/update).
+	Hooks *SystemHooks
+
 	logger *log.Logger
 
-	captcha *captcha
-	sess    *sessions
+	sess *sessions
 	// login attempts rate limiting
 	attempts   map[string]*rateEntry // keyed by client IP
 	attemptsMu sync.Mutex
@@ -57,7 +118,6 @@ func New(cfgPath string, get func() *config.ServerConfig, apply func(*config.Ser
 		GetConfig:   get,
 		ApplyConfig: apply,
 		logger:      log.New(log.Writer(), "[admin] ", log.LstdFlags),
-		captcha:     newCaptcha(5 * time.Minute),
 		sess:        newSessions(24 * time.Hour),
 		attempts:    map[string]*rateEntry{},
 	}
@@ -73,34 +133,87 @@ func (s *Server) isInitMode() bool {
 	return cfg.Admin.Username == "" || cfg.Admin.PasswordHash == ""
 }
 
-// Run serves the console until ctx is cancelled. If keyFile is non-empty the
-// console is served over TLS using certFile/keyFile.
-func (s *Server) Run(ctx context.Context, listen, certFile, keyFile string) error {
+// handler returns the HTTP handler for the console (idempotent).
+func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/setup", s.handleSetup)
-	mux.HandleFunc("/captcha", s.handleCaptcha)
 	mux.HandleFunc("/dashboard", s.requireAuth(s.handleDashboard))
 	mux.HandleFunc("/config", s.requireAuth(s.handleConfigPage))
 	mux.HandleFunc("/api/config", s.requireAuth(s.handleConfigJSON))
 	mux.HandleFunc("/api/config/save", s.requireAuth(s.handleConfigSave))
 	mux.HandleFunc("/api/export/client", s.requireAuth(s.handleExportClient))
 	mux.HandleFunc("/api/export/nat", s.requireAuth(s.handleExportNAT))
-	mux.HandleFunc("/static/", s.handleStatic)
 
-	hs := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		<-ctx.Done()
-		hs.Close()
-	}()
-	s.logger.Printf("web console on %s (init_mode=%v)", listen, s.isInitMode())
+	// file manager
+	mux.HandleFunc("/files", s.requireAuth(s.handleFilesPage))
+	mux.HandleFunc("/api/files/list", s.requireAuth(s.handleFilesList))
+	mux.HandleFunc("/api/files/download", s.requireAuth(s.handleFileDownload))
+	mux.HandleFunc("/api/files/read", s.requireAuth(s.handleFileRead))
+	mux.HandleFunc("/api/files/write", s.requireAuth(s.handleFileWrite))
+	mux.HandleFunc("/api/files/upload", s.requireAuth(s.handleFileUpload))
+	mux.HandleFunc("/api/files/new", s.requireAuth(s.handleFileNew))
+	mux.HandleFunc("/api/files/mkdir", s.requireAuth(s.handleFileMkdir))
+	mux.HandleFunc("/api/files/delete", s.requireAuth(s.handleFileDelete))
+
+	// terminal
+	mux.HandleFunc("/term", s.requireAuth(s.handleTermPage))
+	mux.HandleFunc("/api/term/run", s.requireAuth(s.handleTermRun))
+
+	// services
+	mux.HandleFunc("/services", s.requireAuth(s.handleServicesPage))
+	mux.HandleFunc("/api/systemctl", s.requireAuth(s.handleSystemctl))
+	mux.HandleFunc("/api/service", s.requireAuth(s.handleServiceInspect))
+	mux.HandleFunc("/api/service/generate", s.requireAuth(s.handleServiceGenerate))
+	mux.HandleFunc("/api/service/control", s.requireAuth(s.handleServiceControl))
+
+	// system / update
+	mux.HandleFunc("/system", s.requireAuth(s.handleSystemPage))
+	mux.HandleFunc("/api/system/status", s.requireAuth(s.handleSystemStatus))
+	mux.HandleFunc("/api/system/update", s.requireAuth(s.handleUpdate))
+	mux.HandleFunc("/api/system/apply", s.requireAuth(s.handleApplyStaged))
+	mux.HandleFunc("/api/system/restart", s.requireAuth(s.handleRestart))
+	mux.HandleFunc("/static/", s.handleStatic)
+	return mux
+}
+
+// Run serves the console until ctx is cancelled. If keyFile is non-empty the
+// console is served over TLS using certFile/keyFile.
+func (s *Server) Run(ctx context.Context, listen, certFile, keyFile string) error {
 	if keyFile != "" {
-		s.logger.Printf("web console TLS enabled")
-		return hs.ListenAndServeTLS(certFile, keyFile)
+		return s.RunTLS(ctx, listen, certFile, keyFile)
 	}
+	hs := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { <-ctx.Done(); hs.Close() }()
+	s.logger.Printf("web console on %s (init_mode=%v)", listen, s.isInitMode())
 	return hs.ListenAndServe()
+}
+
+// RunTLS serves the console over TLS on a self-managed listener.
+func (s *Server) RunTLS(ctx context.Context, listen, certFile, keyFile string) error {
+	hs := &http.Server{Addr: listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { <-ctx.Done(); hs.Close() }()
+	s.logger.Printf("web console (TLS) on %s (init_mode=%v)", listen, s.isInitMode())
+	return hs.ListenAndServeTLS(certFile, keyFile)
+}
+
+// RunTLSOn serves the console over an externally provided TLS-capable listener.
+// Used when the console shares the relay port.
+func (s *Server) RunTLSOn(ctx context.Context, ln net.Listener) error {
+	hs := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { <-ctx.Done(); hs.Close() }()
+	s.logger.Printf("web console (TLS, shared port) on %s (init_mode=%v)", ln.Addr(), s.isInitMode())
+	return hs.Serve(ln)
+}
+
+// RunPlainOn serves the console over an externally provided plain listener.
+func (s *Server) RunPlainOn(ctx context.Context, ln net.Listener) error {
+	hs := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { <-ctx.Done(); hs.Close() }()
+	s.logger.Printf("web console on %s (init_mode=%v)", ln.Addr(), s.isInitMode())
+	return hs.Serve(ln)
 }
 
 func (s *Server) ClientIP(r *http.Request) string {
@@ -190,5 +303,11 @@ func readBodyLimit(r *http.Request, limit int64) ([]byte, error) {
 func randToken(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
-	return hexEncode(b)
+	const hexDigits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = hexDigits[v>>4]
+		out[i*2+1] = hexDigits[v&0x0f]
+	}
+	return string(out)
 }

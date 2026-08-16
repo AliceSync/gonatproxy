@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>终端 - DeepSeek Tunnel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files">文件</a>
+      <a href="/term" class="active">终端</a><a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
+  </nav>
+  <main class="container">
+    <div class="page-head">
+      <h2>Shell 终端</h2>
+      <a class="btn btn-ghost" href="/files">文件管理器</a>
+    </div>
+    <div class="term-box">
+      <pre id="termOut" class="term-out"></pre>
+    </div>
+    <form id="cmdForm" class="term-form">
+      <span class="prompt">❯</span>
+      <input id="cmdInput" class="term-input" autocomplete="off" spellcheck="false" placeholder="输入命令，例如 systemctl restart deepseek-server">
+    </form>
+    <div id="termErr" class="muted"></div>
+  </main>
+<script src="/static/term.js"></script>
+</body>
+</html>

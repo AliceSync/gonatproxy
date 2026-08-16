@@ -8,7 +8,8 @@
 </head>
 <body>
   <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
-    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config" class="active">配置</a><a href="/logout">退出</a></div>
+    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config" class="active">配置</a><a href="/files">文件</a>
+      <a href="/term">终端</a><a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
   </nav>
   <main class="container">
     <div class="page-head">
@@ -31,10 +32,10 @@
           <input data-f="public_addr" type="text" value="">
         </label>
         <label>证书文件 cert_file
-          <input data-f="cert_file" type="text" value="">
+          <div class="field-row"><input data-f="cert_file" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('cert_file')">选择</button></div>
         </label>
         <label>私钥文件 key_file
-          <input data-f="key_file" type="text" value="">
+          <div class="field-row"><input data-f="key_file" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('key_file')">选择</button></div>
         </label>
         <label>证书检查秒数
           <input data-f="cert_check_seconds" type="number" min="5" value="">
@@ -43,7 +44,7 @@
           <input data-f="dial_timeout_seconds" type="number" min="1" value="">
         </label>
         <label>日志文件（daemon 模式）
-          <input data-f="log_file" type="text" value="">
+          <div class="field-row"><input data-f="log_file" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('log_file')">选择</button></div>
         </label>
       </div>
     </section>
@@ -70,10 +71,10 @@
           <input data-f="admin.tls" type="checkbox"> 控制台启用 TLS
         </label>
         <label>证书文件（控制台 TLS）
-          <input data-f="admin.cert_file" type="text" value="">
+          <div class="field-row"><input data-f="admin.cert_file" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('admin.cert_file')">选择</button></div>
         </label>
         <label>私钥文件（控制台 TLS）
-          <input data-f="admin.key_file" type="text" value="">
+          <div class="field-row"><input data-f="admin.key_file" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('admin.key_file')">选择</button></div>
         </label>
         <label>管理员用户名 <input data-f="admin.username" type="text" value=""></label>
         <label>新密码（留空不修改）
@@ -88,6 +89,14 @@
       <a class="btn btn-ghost" href="/dashboard">取消</a>
     </div>
   </main>
+
+  <!-- file selector modal -->
+  <div class="fs-bg" id="fsModal">
+    <div class="fs-frame">
+      <div class="fs-top"><strong id="fsTitle">选择文件</strong><button type="button" class="btn btn-ghost btn-sm" onclick="closeFs()">关闭</button></div>
+      <iframe class="fs-iframe" id="fsIframe"></iframe>
+    </div>
+  </div>
 
 <script src="/static/config.js"></script>
 </body>

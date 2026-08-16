@@ -12,6 +12,10 @@
     <div class="nav-links">
       <a href="/dashboard" class="active">概览</a>
       <a href="/config">配置</a>
+      <a href="/files">文件</a>
+      <a href="/term">终端</a>
+      <a href="/services">服务</a>
+      <a href="/system">系统</a>
       <a href="/logout">退出</a>
     </div>
   </nav>
@@ -20,22 +24,21 @@
     <p class="muted">管理入口与隧道服务状态</p>
 
     <div class="cards">
-      <div class="card">
-        <div class="card-label">中继监听</div>
-        <div class="card-value">{{.Config.Listen}}</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Web 控制台</div>
-        <div class="card-value">{{.Config.Admin.Listen}}</div>
-      </div>
-      <div class="card">
-        <div class="card-label">路由数</div>
-        <div class="card-value">{{len .Config.Routes}}</div>
-      </div>
-      <div class="card">
-        <div class="card-label">NAT 客户端</div>
-        <div class="card-value">{{len .Config.Clients}}</div>
-      </div>
+      <div class="card"><div class="card-label">中继监听</div><div class="card-value">{{.Config.Listen}}</div></div>
+      <div class="card"><div class="card-label">Web 控制台</div><div class="card-value">{{.Config.Admin.Listen}}</div></div>
+      <div class="card"><div class="card-label">路由数</div><div class="card-value">{{len .Config.Routes}}</div></div>
+      <div class="card"><div class="card-label">NAT 客户端</div><div class="card-value">{{len .Config.Clients}}</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>运行模式 <a class="btn btn-ghost btn-sm" style="margin-left:10px" href="/services">管理服务 →</a></h3>
+      <p class="muted" style="margin-bottom:8px">
+        {{if .Svc.Managed}}<span class="badge badge-ok">systemd 管理</span>
+        {{else if .Svc.Daemon}}<span class="badge badge-warn">start 守护进程</span>
+        {{else}}<span class="badge badge-info">前台进程</span>{{end}}
+        &nbsp;unit：<code>{{.Svc.Unit}}</code> 配置：<code>{{.Svc.Config}}</code> 运行用户：<code>{{.Svc.RunUser}}</code>
+      </p>
+      {{if not .Svc.Managed}}<p class="muted">当前进程并非由 systemd 管理。可在【服务】页生成 unit 文件并启用/启动，程序会平滑交接。</p>{{end}}
     </div>
 
     <section class="panel">

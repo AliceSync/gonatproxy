@@ -7,7 +7,8 @@
   "log_file": "/var/log/deepseek/server.log",
   "public_addr": "YOUR_SERVER_IP:8443",
   "admin": {
-    "listen": "127.0.0.1:8444"
+    "listen": "",          // empty = share the relay port (default :8443); set e.g. ":8445" for an independent console port
+    "tls": false           // console is always TLS on the shared port; set this only when admin.listen differs
   },
   "clients": {
     "nat-home": {

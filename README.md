@@ -126,29 +126,70 @@ Flags: -config <path>   (default config.json; works before or after the subcomma
 - **foreground** is the default; `start` re-launches itself detached in the
   background (logs to `log_file` or `<config dir>/server.log`) and returns.
 - **No config file**: the server starts in **initialization mode** — it runs
-  only the web console so you can create an account, edit and generate a config
-  from the UI, then start the service normally.
+  only the web console (over **HTTPS** with an in-memory self-signed cert) so
+  you can create an account, edit and generate a config, then start normally.
 
 ## Web console
 
-The server embeds a management console (login = **captcha + account/password**):
-- First run with no admin account → **initialization mode** on
-  `http://localhost:8444` that walks you through creating the admin account.
-- After login, you can:
-  - edit every configurable item (relay listen, cert paths, cert-check interval,
-    dial timeout, routes, NAT clients + their secrets/services, admin listen, TLS);
-  - **export** ready-to-use `client.json` and `natclient.json` configs with one
-    click;
-  - save → the config is persisted and hot-reloaded (no restart needed).
-- Default console listen is in `admin.listen` (loopback). To expose it beyond
-  the host, set `admin.listen` to e.g. `0.0.0.0:8444` and enable `admin.tls`
-  (cert_file/key_file) — otherwise it is plain HTTP on loopback only.
-- Config editing UI: dashboard → 配置. Routes and NAT clients are fully editable
-  with add/remove rows, incl. nested services per NAT client.
-- Login is protected with an image CAPTCHA + rate limiting on failures.
+The server embeds a management console (login = **account + password**):
 
-Server config uses the new schema: `clients` is an object of
-`{"secret": ..., "services": [...]}` (see `configs/server.json`).
+- First run with no admin account → **initialization mode** on
+  `https://localhost:8443` that walks you through creating the admin account.
+- Default console address is the relay port **`:8443`**, **shared** on the same
+  TLS port: the server demuxes HTTP(console) vs tunnel(relay) per connection,
+  so your browser and the AI clients use the same 8443/TLS.
+- You can also give the console an **independent** port via `admin.listen`
+  (e.g. `":8445"`); leave it empty to share `:8443`.
+- If `:8443` is busy at startup in init mode, the server picks an ephemeral
+  free port and tells you.
+- With no cert files configured, an **ephemeral self-signed certificate** is
+  generated in memory (console is still HTTPS); set `cert_file`/`key_file`
+  (ACME) for persistent certs.
+- After login you can:
+  - edit every configurable item (relay listen, cert paths, cert-check interval,
+    dial timeout, routes, NAT clients + secrets/services, admin listen/TLS);
+  - **export** ready-to-use `client.json` and `natclient.json` configs;
+  - save → config is persisted + hot-reloaded (no restart). The console
+    manages NAT client secrets/services for clean export.
+- Failed login attempts are rate-limited per IP.
+
+### Management pages
+
+- **文件 (Files)** — a full file manager: browse, jump to a path, create/delete
+  files & dirs, upload, download, and edit text files in-browser. Restricted by
+  `FileRoot` when set (unset = whole filesystem).
+- **配置 (Config)** — every path field (`cert_file`, `key_file`, `log_file`,
+  and the admin console TLS cert/key) has a **选择** button that opens the file
+  manager in *select mode*: pick a server-side file and it is filled into the
+  field. This is how you choose certificate files instead of typing a path.
+- **终端 (Terminal)** — a shell (`/bin/bash -c`) that streams output live to the
+  browser. Use it for `systemctl`, `scripts/install.sh`, ACL/permission fixes, etc.
+- **服务 (Services)** — systemd unit management:
+  - **生成 / 更新 unit 文件** writes `deepseek-server.service` from the *current*
+    executable and config paths (so the service reads the **same config** the
+    console manages) and runs `daemon-reload`.
+  - **enable（自启）** and **start（立即）** are separated — enable does NOT start.
+  - **平滑交接**: if the server was launched via `start` (daemonized) or in the
+    foreground and is *not* yet a systemd service, clicking **start** first closes
+    the listeners gracefully (freeing the port), lets systemd take over, then the
+    old process exits cleanly. So systemd owns the port and the correct config.
+- **系统 (System)** — binary updates + restart:
+  - Upload a new `deepseek-server`; choose whether to **apply immediately** (mv +
+    fork start) or just stage it. On the system page you can then **apply and
+    restart** the staged update, or **restart now**.
+  - Restart is either delegated to `systemctl restart` (systemd) or a graceful
+    fork (non-systemd), so the service mode keeps working correctly.
+
+### systemd as a `service` CLI
+
+Beyond the web console, the same unit generation is available as a command:
+
+```bash
+deepseek-server service install   # generate unit + enable (separate from start)
+deepseek-server service start     # start now (graceful handoff)
+deepseek-server service status
+deepseek-server service show      # print the unit that would be installed
+```
 
 ## Install as systemd services
 

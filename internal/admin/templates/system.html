@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统 - DeepSeek Tunnel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files">文件</a>
+      <a href="/term">终端</a><a href="/services">服务</a><a href="/system" class="active">系统</a><a href="/logout">退出</a></div>
+  </nav>
+  <main class="container">
+    <div class="page-head">
+      <h2>系统 / 更新</h2>
+      <div class="muted">当前版本 {{.Version}} &nbsp;·&nbsp; <a href="/services">服务管理</a></div>
+    </div>
+
+    <div id="probe" class="panel">
+      <h3>进程状态 <span class="badge badge-info" id="probeSystemd" style="margin-left:10px">检测中…</span></h3>
+      <p class="muted" id="probeText">正在读取…</p>
+    </div>
+
+    <section class="panel">
+      <h3>更新二进制</h3>
+      <p class="muted">上传新的 <code>deepseek-server</code> 可执行文件；保存后可选"立即应用并重启"。</p>
+      <input type="file" id="binFile" class="input-inline">
+      <label class="check-row" style="padding-top:6px"><input type="checkbox" id="restartNow"> 上传后立即应用并重启（mv 替换 + fork 启动）</label>
+      <div class="alert alert-warn hidden" id="restartConfirm">⚠️ 将替换当前程序并重启服务，现有连接会断开。确认继续？</div>
+      <div class="actions"><button class="btn btn-primary" onclick="up1()">上传（仅暂存）</button> <button class="btn btn-danger" onclick="up2()">上传并立即重启</button></div>
+      {{if .Staged}}<div class="muted">已存在暂存更新 —— 在下方点击【应用并重启】生效。</div>{{end}}
+      <div class="actions">
+        <button class="btn btn-danger" onclick="applied()">应用暂存更新并重启</button>
+        <button class="btn btn-danger btn-plain" onclick="restartNowFn()">立即重启当前服务</button>
+      </div>
+      <p class="muted" id="restartHint"></p>
+    </section>
+
+    <div id="res" class="alert hidden"></div>
+  </main>
+<script src="/static/system.js"></script>
+</body>
+</html>

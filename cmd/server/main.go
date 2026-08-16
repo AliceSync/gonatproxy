@@ -4,6 +4,7 @@
 //
 //	deepseek-server [flags]            run in the foreground
 //	deepseek-server start [flags]      daemonize (run in background)
+//	deepseek-server service <sub>      manage the systemd unit (install/enable/start/…)
 //	deepseek-server version            print version and exit
 //
 // Flags: -config <path> defaults to config.json.
@@ -26,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -129,6 +131,43 @@ func (rt *runtime) getConfig() *config.ServerConfig {
 	return cloneConfig(rt.sc)
 }
 
+// -- small accessors used at startup (read under no lock; called once) --
+func (rt *runtime) scListen() string   { return rt.sc.Listen }
+func (rt *runtime) scCertFile() string { return rt.sc.CertFile }
+func (rt *runtime) scKeyFile() string  { return rt.sc.KeyFile }
+func (rt *runtime) certCheckSecs() int { return rt.sc.CertCheckSeconds }
+func (rt *runtime) scAdminListen() string {
+	if rt.sc.Admin == nil {
+		return ""
+	}
+	return rt.sc.Admin.Listen
+}
+func (rt *runtime) scAdminCert() (string, string) {
+	if rt.sc.Admin == nil {
+		return "", ""
+	}
+	return rt.sc.Admin.CertFile, rt.sc.Admin.KeyFile
+}
+
+// sameAddr reports whether a and b resolve to the same host:port pair, where
+// an empty host means "all interfaces" (":8443" == "0.0.0.0:8443").
+func sameAddr(a, b string) bool {
+	ha, fa, _ := net.SplitHostPort(a)
+	hb, fb, _ := net.SplitHostPort(b)
+	if fa != fb {
+		return false
+	}
+	ha, hb = normalizeHost(ha), normalizeHost(hb)
+	return ha == hb
+}
+
+func normalizeHost(h string) string {
+	if h == "" || h == "0.0.0.0" || h == "::" || h == "[::]" {
+		return ""
+	}
+	return h
+}
+
 // applyConfig persists + applies a new config document from the console.
 func (rt *runtime) applyConfig(cfgPath string, next *config.ServerConfig) error {
 	next.Normalize()
@@ -145,6 +184,27 @@ func (rt *runtime) applyConfig(cfgPath string, next *config.ServerConfig) error 
 	}
 	log.Printf("config applied and reloaded")
 	return nil
+}
+
+// applyLoose persists without full validation. Used only when creating the
+// first admin account (no routes yet); routes are added afterwards via the UI.
+func (rt *runtime) applyLoose(cfgPath string, next *config.ServerConfig) error {
+	next.Normalize()
+	if err := next.Save(cfgPath); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := rt.apply(next); err != nil {
+		return err
+	}
+	log.Printf("admin account saved (init mode)")
+	return nil
+}
+
+// hasAdmin reports whether an admin account is configured.
+func (rt *runtime) hasAdmin() bool {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return rt.sc != nil && rt.sc.Admin != nil && rt.sc.Admin.Username != ""
 }
 
 // natSession tracks one connected NAT client.
@@ -215,8 +275,11 @@ func main() {
 		case "version":
 			fmt.Println("deepseek-server", version)
 			return
+		case "service":
+			// e.g. `deepseek-server service install|enable|start|...`
+			os.Exit(runServiceCLI(*cfgPath, args[1:]))
 		default:
-			log.Fatalf("unknown command %q\nusage: deepseek-server [start|run] [-config path]", args[0])
+			log.Fatalf("unknown command %q\nusage: deepseek-server [start|run|service install] [-config path]", args[0])
 		}
 	}
 
@@ -245,82 +308,115 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 		<-sig
 		log.Println("shutting down")
 		cancel()
-		// give handlers a moment to return
 		time.Sleep(300 * time.Millisecond)
 		os.Exit(0)
 	}()
 
+	// A runtime always exists (empty in init mode) so the console can edit it.
 	var rt *runtime
 	if sc != nil {
 		rt = newRuntime(sc)
 	} else {
-		// No config yet (init mode): build an empty runtime so the console can
-		// edit/persist against it; the relay is not started below.
 		rt = newRuntime(&config.ServerConfig{Admin: &config.Admin{}})
 	}
+	relayOK := !(initMode || sc == nil || len(sc.Routes) == 0)
 
-	// Start the web console (always available; required alone in init mode).
-	go func() {
-		adm := admin.New(cfgPath,
-			func() *config.ServerConfig { return rt.getConfig() },
-			func(next *config.ServerConfig) error { return rt.applyConfig(cfgPath, next) },
-			func() error { return nil },
-		)
-		var listen, cert, key string
-		if rt.mu.RLock(); rt.sc != nil && rt.sc.Admin != nil {
-			listen, cert, key = rt.sc.Admin.Listen, rt.sc.Admin.CertFile, rt.sc.Admin.KeyFile
-			rt.mu.RUnlock()
+	adm := admin.New(cfgPath,
+		func() *config.ServerConfig { return rt.getConfig() },
+		func(next *config.ServerConfig) error {
+			if !rt.hasAdmin() {
+				// first account creation: allow a config with no routes yet
+				return rt.applyLoose(cfgPath, next)
+			}
+			return rt.applyConfig(cfgPath, next)
+		},
+		func() error { return nil },
+	)
+	adm.Hooks = buildAdminHooks(cfgPath)
+
+	// Certificates: ACME files if present, else ephemeral in-memory self-signed.
+	cm := newCertManager(rt.scCertFile(), rt.scKeyFile())
+	cm.Ensure()
+	go cm.Watch(time.Duration(rt.certCheckSecs()) * time.Second)
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: cm.GetCertificate}
+
+	// Port layout: shared (console+relay on one TLS port) by default, or
+	// independent if admin.listen is explicitly set and differs from relay.
+	adminListen := rt.scAdminListen()
+	shared := adminListen == "" || sameAddr(adminListen, rt.scListen())
+
+	if shared {
+		listenAddr := rt.scListen()
+		if listenAddr == "" {
+			listenAddr = config.DefaultListenAddr
+		}
+		if initMode || sc == nil {
+			// init mode: only the console runs; allow port fallback if busy.
+			running, err := startSharedInit(ctx, listenAddr, tlsCfg, adm)
+			if err != nil {
+				log.Printf("announce: %v", err)
+			}
+			log.Printf("initialization mode: web console only (https) on %s — no relay until a config is saved", running)
+			<-ctx.Done()
+			return
+		}
+		// full mode with shared port
+		addr, err := startShared(ctx, listenAddr, tlsCfg, rt, relayOK, adm)
+		if err != nil {
+			log.Printf("shared listen %s: %v", listenAddr, err)
 		} else {
-			rt.mu.RUnlock()
+			logRouteSummary(rt)
+			log.Printf("console + relay share TLS port %s", addr)
 		}
-		if listen == "" {
-			listen = config.DefaultAdminListenAddr // nothing configured yet
-		}
-		if err := adm.Run(ctx, listen, cert, key); err != nil && ctx.Err() == nil {
-			log.Printf("admin console: %v", err)
-		}
-	}()
-
-	if initMode || sc == nil {
-		log.Printf("initialization mode: web console only, no relay (create a config first)")
 		<-ctx.Done()
 		return
 	}
 
-	if err := startRelay(sc, rt, ctx); err != nil {
+	// independent: console on its own listener
+	cert, key := rt.scAdminCert()
+	if key != "" {
+		cert, key = rt.scCertFile(), rt.scKeyFile()
+	}
+	if initMode || sc == nil {
+		log.Printf("initialization mode: web console only on %s", adminListen)
+		<-ctx.Done()
+		return
+	}
+	go func() {
+		if err := runIndependent(ctx, adminListen, cert, key, adm); err != nil && ctx.Err() == nil {
+			log.Printf("admin console: %v", err)
+		}
+	}()
+	if err := startRelay(sc, rt, ctx, tlsCfg); err != nil {
 		log.Printf("relay: %v", err)
 	}
 }
 
-func startRelay(sc *config.ServerConfig, rt *runtime, ctx context.Context) error {
-	cm := &CertManager{certFile: sc.CertFile, keyFile: sc.KeyFile}
-	go cm.Watch(time.Duration(sc.CertCheckSeconds) * time.Second)
-	tlsCfg := &tls.Config{
-		MinVersion:     tls.VersionTLS12,
-		GetCertificate: cm.GetCertificate,
-	}
-	ln, err := tls.Listen("tcp", sc.Listen, tlsCfg)
-	if err != nil {
-		return fmt.Errorf("relay listen %s: %w", sc.Listen, err)
-	}
-	log.Printf("relay listening on %s (ACME cert reload every %ds)", sc.Listen, sc.CertCheckSeconds)
-	logRouteSummary(rt)
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			log.Printf("accept: %v", err)
-			continue
+// startSharedInit runs the web console on a single TLS port in init mode, with
+// automatic fallback to an ephemeral port if the default is busy.
+func startSharedInit(ctx context.Context, addr string, tlsCfg *tls.Config, adm *admin.Server) (string, error) {
+	raw, err := net.Listen("tcp", addr)
+	if err != nil && isAddrInUse(err) {
+		fallback, ferr := net.Listen("tcp", "127.0.0.1:0")
+		if ferr != nil {
+			return "", ferr
 		}
-		go handleConnection(conn, rt)
+		log.Printf("WARNING: %s busy; using ephemeral port %d for web console", addr, fallback.Addr().(*net.TCPAddr).Port)
+		raw = fallback
+	} else if err != nil {
+		return "", err
 	}
+	go func() { <-ctx.Done(); raw.Close() }()
+	cl := &channelListener{ch: make(chan net.Conn, 64), addr: raw.Addr(), closed: make(chan struct{})}
+	sl := &sharedListener{raw: raw, tlsCfg: tlsCfg, console: cl, rt: nil, relayOK: false, ctx: ctx}
+	sl.raw = raw
+	go sl.loop()
+	go func() {
+		if err := adm.RunTLSOn(ctx, cl); err != nil && ctx.Err() == nil {
+			log.Printf("admin console: %v", err)
+		}
+	}()
+	return raw.Addr().String(), nil
 }
 
 func logRouteSummary(rt *runtime) {
@@ -354,4 +450,32 @@ func flagValue(args []string, key string) string {
 		}
 	}
 	return ""
+}
+
+// startRelay runs the relay server on its own TLS listener (independent-port
+// mode; the console is served separately). Blocks until ctx is cancelled.
+func startRelay(sc *config.ServerConfig, rt *runtime, ctx context.Context, tlsCfg *tls.Config) error {
+	ln, err := tls.Listen("tcp", sc.Listen, tlsCfg)
+	if err != nil {
+		return fmt.Errorf("relay listen %s: %w", sc.Listen, err)
+	}
+	registerStop(func() { ln.Close() })
+	log.Printf("relay listening on %s (ACME cert reload every %ds)", sc.Listen, sc.CertCheckSeconds)
+	logRouteSummary(rt)
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			log.Printf("accept: %v", err)
+			continue
+		}
+		go handleConnection(conn, rt)
+	}
 }

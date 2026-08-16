@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,9 +51,31 @@ func daemonize(cfgPath string, cfg *config.ServerConfig, missing bool) {
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("daemonize: start: %v", err)
 	}
+	addr := cfgListen(cfg)
 	fmt.Printf("deepseek-server running in background: pid=%d log=%s\n", cmd.Process.Pid, logFile)
-	fmt.Printf("web console available at http://127.0.0.1:8444 (or per config)\n")
+	fmt.Printf("web console available at https://127.0.0.1%s (or per config)\n", addr)
 
 	// Detach: release the child from this process group without waiting.
 	_ = cmd.Process.Release()
+}
+
+// cfgListen returns the console listen address (host part trimmed).
+func cfgListen(cfg *config.ServerConfig) string {
+	admin := ""
+	if cfg != nil && cfg.Admin != nil {
+		admin = cfg.Admin.Listen
+	}
+	addr := admin
+	if addr == "" {
+		addr = ":8443"
+		if cfg != nil && cfg.Listen != "" {
+			addr = cfg.Listen
+		}
+	}
+	host, port, err := net.SplitHostPort(addr)
+	_ = err
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		return ":" + port
+	}
+	return addr
 }

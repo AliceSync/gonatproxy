@@ -9,11 +9,12 @@ import (
 	"os"
 )
 
-// DefaultListenAddr is used as the relay listen address if not configured.
+// DefaultListenAddr is used as the relay+console (shared) listen address.
 const DefaultListenAddr = ":8443"
 
-// DefaultAdminListenAddr is used by the web console when admin.listen is empty.
-const DefaultAdminListenAddr = "127.0.0.1:8444"
+// DefaultAdminListenAddr is used only as a fallback; a server config with an
+// empty admin.listen means the console SHOULD share the relay port (8443).
+const DefaultAdminListenAddr = ":8443"
 
 // Service describes one locally-exposed service on a NAT client (for export and
 // display; live routing uses what the NAT client reports at registration time).
@@ -103,9 +104,8 @@ func (c *ServerConfig) Normalize() {
 	if c.Admin == nil {
 		c.Admin = &Admin{}
 	}
-	if c.Admin.Listen == "" {
-		c.Admin.Listen = DefaultAdminListenAddr
-	}
+	// Empty admin.listen => share the relay port (default :8443). We do NOT
+	// fill it here so the server can detect "shared" vs "independent".
 	if len(c.Clients) == 0 {
 		c.Clients = map[string]*NatClient{}
 	}

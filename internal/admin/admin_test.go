@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"encoding/json"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -25,15 +28,13 @@ func newTestServer() (*Server, func() *config.ServerConfig) {
 	return s, func() *config.ServerConfig { return cur }
 }
 
-// newCaptchaToken issues a captcha and returns the token + answer (white box).
-func newCaptchaToken(s *Server) (string, string) {
-	_, _, _ = s.captcha.New()
-	s.captcha.mu.Lock()
-	defer s.captcha.mu.Unlock()
-	for t, e := range s.captcha.codes {
-		return t, e.code
-	}
-	return "", ""
+// postHelp runs a urlencoded POST against handler hh.
+func postHelp(hh http.HandlerFunc, vals url.Values) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/x", strings.NewReader(vals.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	hh(rec, req)
+	return rec
 }
 
 func TestPasswordHashRoundtrip(t *testing.T) {
@@ -57,24 +58,15 @@ func TestSetupCreatesAccount(t *testing.T) {
 	if !s.isInitMode() {
 		t.Fatal("should start in init mode")
 	}
-	tok, code := newCaptchaToken(s)
-
 	form := url.Values{}
-	form.Set("captcha_token", tok)
-	form.Set("captcha", code)
 	form.Set("username", "admin")
 	form.Set("password", "supersecret99")
 	form.Set("password2", "supersecret99")
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/setup", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	s.handleSetup(rec, req)
-
+	rec := postHelp(s.handleSetup, form)
 	if rec.Code != 302 && rec.Code != 200 {
 		t.Fatalf("setup code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	// init mode off now
 	if s.isInitMode() {
 		t.Fatal("init mode should be off after setup")
 	}
@@ -87,49 +79,71 @@ func TestSetupCreatesAccount(t *testing.T) {
 	}
 }
 
-func TestSetupRejectsBadCaptcha(t *testing.T) {
+func TestSetupRejectsWeakPassword(t *testing.T) {
 	s, _ := newTestServer()
-	tok, _ := newCaptchaToken(s)
 	form := url.Values{}
-	form.Set("captcha_token", tok)
-	form.Set("captcha", "XXXXX")
 	form.Set("username", "admin")
-	form.Set("password", "supersecret99")
-	form.Set("password2", "supersecret99")
-	rec := httptest.NewRecorder()
-	s.handleSetup(rec, httptest.NewRequest("POST", "/setup", strings.NewReader(form.Encode())))
+	form.Set("password", "short")
+	form.Set("password2", "short")
+	rec := postHelp(s.handleSetup, form)
 	if !s.isInitMode() {
-		t.Fatal("init mode should remain on when captcha is wrong")
+		t.Fatal("setup should fail: init mode remains on for weak password")
 	}
+	if rec.Code == 200 { // plain POST would re-render setup (200) not success
+		// Acceptable: no account created
+	}
+	cur := s.GetConfig()
+	if cur.Admin.Username != "" {
+		t.Fatal("weak-password setup should not create account")
+	}
+}
+
+func TestLoginWrongPasswordRejected(t *testing.T) {
+	s, _ := newTestServer()
+	// create account
+	postHelp(s.handleSetup, url.Values{
+		"username": {"admin"}, "password": {"hunter22222"}, "password2": {"hunter22222"},
+	})
+	rec := postHelp(s.handleLogin, url.Values{"username": {"admin"}, "password": {"wrong"}})
+	// AJAX not set -> rejectAuth renders (200) or 401? For plain POST rejectAuth renders setup.html (200)
+	if rec.Code != 200 && rec.Code != 401 {
+		t.Fatalf("login wrong-pw code=%d", rec.Code)
+	}
+	// should not be authed
+	if s.sess.Valid(s.sessionTokenV2(rec)) {
+		t.Fatal("should not be authed with wrong password")
+	}
+}
+
+func (s *Server) sessionTokenV2(r *httptest.ResponseRecorder) string {
+	for _, c := range r.Result().Cookies() {
+		if c.Name == sessionCookie {
+			return c.Value
+		}
+	}
+	return ""
 }
 
 func TestLoginAndConfigRoundtrip(t *testing.T) {
 	s, getCur := newTestServer()
-	// establish an account via setup
-	func() {
-		tok, code := newCaptchaToken(s)
-		form := url.Values{}
-		form.Set("captcha_token", tok)
-		form.Set("captcha", code)
-		form.Set("username", "admin")
-		form.Set("password", "hunter22222")
-		form.Set("password2", "hunter22222")
-		rec := httptest.NewRecorder()
-		s.handleSetup(rec, httptest.NewRequest("POST", "/setup", strings.NewReader(form.Encode())))
-	}()
-
-	// login
-	tok, code := newCaptchaToken(s)
-	form := url.Values{}
-	form.Set("captcha_token", tok)
-	form.Set("captcha", code)
-	form.Set("username", "admin")
-	form.Set("password", "hunter22222")
+	// create account
+	postHelp(s.handleSetup, url.Values{
+		"username": {"admin"}, "password": {"hunter22222"}, "password2": {"hunter22222"},
+	})
+	// login (AJAX so we get a 200 + JSON on success)
 	rec := httptest.NewRecorder()
-	s.handleLogin(rec, httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode())))
-	if rec.Code != 302 {
+	req := httptest.NewRequest("POST", "/login", strings.NewReader(url.Values{
+		"username": {"admin"}, "password": {"hunter22222"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Requested-With", "fetch")
+	req.Header.Set("Accept", "application/json")
+	s.handleLogin(rec, req)
+	if rec.Code != 200 {
 		t.Fatalf("login code=%d body=%s", rec.Code, rec.Body.String())
 	}
+	// set the returned session cookie on subsequent requests
+	cookie := rec.Result().Cookies()[0]
 
 	// save a full config with routes + client
 	save := `{
@@ -146,13 +160,13 @@ func TestLoginAndConfigRoundtrip(t *testing.T) {
 	  "new_password":""
 	}`
 	rec = httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/config/save", strings.NewReader(save))
-	req.Header.Set("Content-Type", "application/json")
-	s.handleConfigSave(rec, req)
+	req2 := httptest.NewRequest("POST", "/api/config/save", strings.NewReader(save))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.AddCookie(cookie)
+	s.handleConfigSave(rec, req2)
 	if rec.Code != 200 {
 		t.Fatalf("save code=%d body=%s", rec.Code, rec.Body.String())
 	}
-
 	cur := getCur()
 	if len(cur.Routes) != 2 || cur.Clients["nat1"] == nil || cur.Clients["nat1"].Secret != "abc123" {
 		t.Fatalf("config not saved: %+v", cur.Routes)
@@ -161,7 +175,6 @@ func TestLoginAndConfigRoundtrip(t *testing.T) {
 
 func TestExportEndpoints(t *testing.T) {
 	s, _ := newTestServer()
-	// inject some data
 	cur := s.GetConfig()
 	cur.Routes = []config.Route{{Name: "d", ListenPort: 5051, Target: "127.0.0.1:8000"}}
 	cur.Clients["nat1"] = &config.NatClient{Secret: "sec", Services: []config.Service{{Name: "web", Port: 8080, Addr: "127.0.0.1:8080"}}}
@@ -176,5 +189,96 @@ func TestExportEndpoints(t *testing.T) {
 	s.handleExportNAT(n, httptest.NewRequest("GET", "/", nil))
 	if !strings.Contains(n.Body.String(), "nat1") || !strings.Contains(n.Body.String(), "sec") {
 		t.Fatalf("nat export: %s", n.Body.String())
+	}
+}
+
+// jsonUnmarshalPlain decodes JSON.
+func jsonUnmarshalPlain(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+// TestSetupMultipart verifies the browser's native fetch(FormData) submit path,
+// which is multipart/form-data — ParseForm alone would miss it.
+func TestSetupMultipart(t *testing.T) {
+	s, _ := newTestServer()
+	var b strings.Builder
+	mw := multipart.NewWriter(&b)
+	_ = mw.WriteField("username", "admin")
+	_ = mw.WriteField("password", "12345678")
+	_ = mw.WriteField("password2", "12345678")
+	mw.Close()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/setup", strings.NewReader(b.String()))
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-Requested-With", "fetch")
+	req.Header.Set("Accept", "application/json")
+	s.handleSetup(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("setup multipart code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if s.isInitMode() {
+		t.Fatal("account should be created via multipart")
+	}
+}
+
+// TestServiceEndpoints verifies the services API routes respond and honor the
+// host-provided service hooks (no systemctl/file side effects in tests).
+func TestServiceEndpoints(t *testing.T) {
+	s, _ := newTestServer()
+	s.Hooks = &SystemHooks{}
+
+	// no hooks configured => endpoints report unavailable
+	rec := httptest.NewRecorder()
+	s.handleServiceInspect(rec, httptest.NewRequest("GET", "/api/service", nil))
+	var insp ServiceInspect
+	if err := json.Unmarshal(rec.Body.Bytes(), &insp); err != nil {
+		t.Fatalf("decode inspect: %v", err)
+	}
+	if insp.Unit != s.hooks().UnitIfAny() {
+		t.Fatalf("unexpected unit %q", insp.Unit)
+	}
+
+	rec = httptest.NewRecorder()
+	s.handleServiceGenerate(rec, httptest.NewRequest("POST", "/api/service/generate", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("generate w/o hooks code=%d", rec.Code)
+	}
+
+	// now provide hooks
+	s.Hooks.Service = &ServiceHooks{
+		Inspect: func() ServiceInspect {
+			return ServiceInspect{Unit: "deepseek-server.service", Installed: true, Systemd: true, Managed: true, Config: "/etc/deepseek/server.json", RunUser: "deepseek", Exe: "/usr/local/bin/deepseek-server"}
+		},
+		Generate: func() (ServiceResult, error) {
+			return ServiceResult{OK: "已写入：/etc/systemd/system/deepseek-server.service"}, nil
+		},
+		Control: func(action string) (ServiceResult, error) {
+			if action == "enable" {
+				return ServiceResult{OK: "已启用（自启）"}, nil
+			}
+			return ServiceResult{OK: "已执行 " + action}, nil
+		},
+	}
+	rec = httptest.NewRecorder()
+	s.handleServiceInspect(rec, httptest.NewRequest("GET", "/api/service", nil))
+	if !strings.Contains(rec.Body.String(), "deepseek-server.service") {
+		t.Fatalf("inspect missing unit: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	s.handleServiceGenerate(rec, httptest.NewRequest("POST", "/api/service/generate", nil))
+	if !strings.Contains(rec.Body.String(), "已写入") {
+		t.Fatalf("generate body: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	s.handleServiceControl(rec, httptest.NewRequest("POST", "/api/service/control?action=enable", nil))
+	if !strings.Contains(rec.Body.String(), "已启用") {
+		t.Fatalf("control enable body: %s", rec.Body.String())
+	}
+
+	// invalid action rejected
+	rec = httptest.NewRecorder()
+	s.handleServiceControl(rec, httptest.NewRequest("POST", "/api/service/control?action=delete", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid action code=%d", rec.Code)
 	}
 }

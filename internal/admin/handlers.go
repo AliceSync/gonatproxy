@@ -1,6 +1,6 @@
 package admin
 
-// HTTP handlers for the console: captcha, login/logout, setup (init mode),
+// HTTP handlers for the console: login/logout, setup (init mode),
 // dashboard, config editing/saving, and config export.
 
 import (
@@ -13,16 +13,7 @@ import (
 	"deepseekaiworker/internal/config"
 )
 
-type loginData struct {
-	Error      string
-	Captcha    bool
-	InitMode   bool
-	HasAccount bool
-}
-
-func (s *Server) loginViewData(errMsg string, captcha bool) loginData {
-	return loginData{Error: errMsg, Captcha: captcha, InitMode: s.isInitMode(), HasAccount: !s.isInitMode()}
-}
+type loginData struct{}
 
 // rateLimit returns whether the IP is blocked from further login attempts.
 func (s *Server) rateLimit(w http.ResponseWriter, r *http.Request) bool {
@@ -60,19 +51,6 @@ func (s *Server) resetAttempts(ip string) {
 	s.attemptsMu.Unlock()
 }
 
-func (s *Server) handleCaptcha(w http.ResponseWriter, r *http.Request) {
-	token, png, err := s.captcha.New()
-	if err != nil {
-		http.Error(w, "captcha error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "no-store")
-	// include token so the login form can submit it
-	w.Header().Set("X-Captcha-Token", token)
-	w.Write(png)
-}
-
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.isInitMode() {
 		http.Redirect(w, r, "/setup", http.StatusFound)
@@ -82,19 +60,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 		return
 	}
-	captcha := r.Method == http.MethodPost
-	if captcha {
+	if r.Method == http.MethodPost {
 		if s.rateLimit(w, r) {
+			s.rejectAuth(w, r, "尝试次数过多，请稍后再试")
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			s.render(w, "login.html", s.loginViewData("bad form", true))
-			return
-		}
-		// captcha verify
-		if !s.captcha.Verify(r.Form.Get("captcha_token"), r.Form.Get("captcha")) {
-			s.recordFailure(s.ClientIP(r))
-			s.render(w, "login.html", s.loginViewData("验证码错误", true))
+		if err := parseBody(r); err != nil {
+			s.rejectAuth(w, r, "表单解析失败")
 			return
 		}
 		user := r.Form.Get("username")
@@ -103,25 +75,114 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if cfg == nil || cfg.Admin == nil || user != cfg.Admin.Username ||
 			!VerifyPassword(cfg.Admin.PasswordHash, pass) {
 			s.recordFailure(s.ClientIP(r))
-			s.render(w, "login.html", s.loginViewData("账号或密码错误", true))
+			s.rejectAuth(w, r, "账号或密码错误")
 			return
 		}
 		s.resetAttempts(s.ClientIP(r))
 		tok := s.sess.Create()
-		secure := cfg.Admin.TLS
-		setSessionCookie(w, tok, s.sess.ttl, secure)
-		http.Redirect(w, r, "/dashboard", http.StatusFound)
+		setSessionCookie(w, tok, s.sess.ttl, s.isTLS())
+		s.acceptAuth(w, r, "/dashboard")
 		return
 	}
 	// GET
-	token, png, err := s.captcha.New()
-	_ = token
-	if err != nil {
-		http.Error(w, "captcha error", 500)
+	s.render(w, "login.html", loginData{})
+}
+
+// isAJAX reports whether a request expects a JSON response (fetch-based forms).
+func isAJAX(r *http.Request) bool {
+	return r.Header.Get("X-Requested-With") == "fetch" ||
+		strings.Contains(r.Header.Get("Accept"), "application/json")
+}
+
+// parseBody parses the request body into r.Form for both urlencoded and
+// multipart/form-data. Request.ParseForm() alone handles urlencoded; multipart
+// requires an explicit ParseMultipartForm call (which, conversely, errors on
+// non-multipart bodies, so only invoke it when content-type matches).
+func parseBody(r *http.Request) error {
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		return r.ParseMultipartForm(32 << 20)
+	}
+	return nil
+}
+
+// rejectAuth responds to a failed login/setup. For AJAX it returns a JSON
+// error (so the page keeps the user's input); for plain GET it re-renders.
+func (s *Server) rejectAuth(w http.ResponseWriter, r *http.Request, msg string) {
+	if isAJAX(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": msg})
 		return
 	}
-	_ = png
-	s.render(w, "login.html", s.loginViewData("", true))
+	// non-AJAX: render an error page
+	s.render(w, "setup.html", map[string]any{"Error": msg, "Username": r.Form.Get("username")})
+}
+
+func (s *Server) acceptAuth(w http.ResponseWriter, r *http.Request, to string) {
+	if isAJAX(r) {
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "true", "to": to})
+		return
+	}
+	http.Redirect(w, r, to, http.StatusFound)
+}
+
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	if !s.isInitMode() {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if s.rateLimit(w, r) {
+			s.rejectAuth(w, r, "尝试次数过多，请稍后再试")
+			return
+		}
+		if err := parseBody(r); err != nil {
+			s.rejectAuth(w, r, "表单解析失败")
+			return
+		}
+		user := strings.TrimSpace(r.Form.Get("username"))
+		pass := r.Form.Get("password")
+		pass2 := r.Form.Get("password2")
+		if len(user) < 3 {
+			s.rejectAuth(w, r, "用户名至少3个字符")
+			return
+		}
+		if len(pass) < 8 {
+			s.rejectAuth(w, r, "密码至少8位")
+			return
+		}
+		if pass != pass2 {
+			s.rejectAuth(w, r, "两次密码不一致")
+			return
+		}
+		hash, err := HashPassword(pass)
+		if err != nil {
+			s.rejectAuth(w, r, "密码加密失败")
+			return
+		}
+		next := s.GetConfig()
+		if next == nil {
+			next = &config.ServerConfig{Admin: &config.Admin{}}
+		}
+		if next.Admin == nil {
+			next.Admin = &config.Admin{}
+		}
+		next.Admin.Username = user
+		next.Admin.PasswordHash = hash
+		if err := s.ApplyConfig(next); err != nil {
+			s.logger.Printf("apply config during setup: %v", err)
+			s.rejectAuth(w, r, "保存失败: "+err.Error())
+			return
+		}
+		s.logger.Printf("admin account created; leaving init mode")
+		tok := s.sess.Create()
+		setSessionCookie(w, tok, s.sess.ttl, next.Admin.TLS)
+		s.acceptAuth(w, r, "/dashboard")
+		return
+	}
+	// GET
+	s.render(w, "setup.html", map[string]any{})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -138,67 +199,9 @@ func (s *Server) isTLS() bool {
 	return false
 }
 
-func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	if !s.isInitMode() {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	if r.Method == http.MethodPost {
-		if err := r.ParseForm(); err != nil {
-			s.render(w, "setup.html", map[string]any{"Error": "bad form"})
-			return
-		}
-		if !s.captcha.Verify(r.Form.Get("captcha_token"), r.Form.Get("captcha")) {
-			s.render(w, "setup.html", map[string]any{"Error": "验证码错误"})
-			return
-		}
-		user := strings.TrimSpace(r.Form.Get("username"))
-		pass := r.Form.Get("password")
-		pass2 := r.Form.Get("password2")
-		if len(user) < 3 {
-			s.render(w, "setup.html", map[string]any{"Error": "用户名至少3个字符"})
-			return
-		}
-		if len(pass) < 8 {
-			s.render(w, "setup.html", map[string]any{"Error": "密码至少8位"})
-			return
-		}
-		if pass != pass2 {
-			s.render(w, "setup.html", map[string]any{"Error": "两次密码不一致"})
-			return
-		}
-		hash, err := HashPassword(pass)
-		if err != nil {
-			s.render(w, "setup.html", map[string]any{"Error": "hashing error"})
-			return
-		}
-		next := s.GetConfig()
-		if next == nil {
-			next = &config.ServerConfig{Admin: &config.Admin{}}
-		}
-		if next.Admin == nil {
-			next.Admin = &config.Admin{}
-		}
-		next.Admin.Username = user
-		next.Admin.PasswordHash = hash
-		if err := s.ApplyConfig(next); err != nil {
-			s.logger.Printf("apply config during setup: %v", err)
-			s.render(w, "setup.html", map[string]any{"Error": fmt.Sprintf("保存失败: %v", err)})
-			return
-		}
-		s.logger.Printf("admin account created; leaving init mode")
-		tok := s.sess.Create()
-		setSessionCookie(w, tok, s.sess.ttl, next.Admin.TLS)
-		http.Redirect(w, r, "/dashboard", http.StatusFound)
-		return
-	}
-	// GET
-	s.render(w, "setup.html", map[string]any{})
-}
-
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	cfg := s.GetConfig()
-	s.render(w, "dashboard.html", map[string]any{"Config": cfg})
+	s.render(w, "dashboard.html", map[string]any{"Config": cfg, "Svc": s.inspectService()})
 }
 
 func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {

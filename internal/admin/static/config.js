@@ -197,6 +197,28 @@
       .catch(e => msg('加载配置失败', true));
   }
 
+  // --- file selector modal ---
+  let fsField = '';
+  window.pickFile = function (field) {
+    fsField = field;
+    const modal = document.getElementById('fsModal');
+    document.getElementById('fsTitle').textContent = '选择文件 -> ' + field;
+    document.getElementById('fsIframe').src = '/files?select=1&field=' + field;
+    modal.classList.add('open');
+  };
+  window.closeFs = function () {
+    document.getElementById('fsModal').classList.remove('open');
+    document.getElementById('fsIframe').src = 'about:blank';
+  };
+  window.addEventListener('message', function (ev) {
+    if (ev.data && ev.data.type === 'fileSelect') {
+      // fill the matching input[data-f]
+      const inp = document.querySelector('input[data-f="' + ev.data.field + '"]');
+      if (inp) { inp.value = ev.data.path; }
+      window.closeFs();
+    }
+  });
+
   // set forward-reference for admin fields handled in readBasic
   loadConfig();
 })();

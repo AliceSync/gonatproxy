@@ -12,41 +12,40 @@
       <div class="logo">⚙</div>
       <div>
         <h1>首次初始化</h1>
-        <p>创建管理账号（验证码 + 账号密码）</p>
+        <p class="sub">创建管理账号（账号 + 密码）</p>
       </div>
     </div>
-    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
-    <form method="post" action="/setup" class="form">
-      <input type="hidden" name="captcha_token" id="captcha_token">
+    <div id="err" class="alert alert-error hidden"></div>
+    <form id="setupForm" class="form" novalidate>
       <label>管理员用户名
-        <input type="text" name="username" minlength="3" required>
+        <input type="text" name="username" id="f_user" minlength="3" required>
       </label>
       <label>密码（至少8位）
-        <input type="password" name="password" minlength="8" required>
+        <input type="password" name="password" id="f_pass" minlength="8" required>
       </label>
       <label>确认密码
-        <input type="password" name="password2" minlength="8" required>
-      </label>
-      <label class="captcha-row">
-        <span>验证码</span>
-        <img id="captcha_img" src="/captcha" alt="验证码" title="点击刷新">
-        <input type="text" name="captcha" class="captcha-input" autocomplete="off" required placeholder="输入图中字符">
+        <input type="password" name="password2" id="f_pass2" minlength="8" required>
       </label>
       <button type="submit" class="btn btn-primary btn-block">创建并进入</button>
     </form>
   </div>
+
   <script>
-    const img = document.getElementById('captcha_img');
-    const tokenIn = document.getElementById('captcha_token');
-    function refresh() {
-      fetch('/captcha').then(r => {
-        const t = r.headers.get('X-Captcha-Token');
-        if (t) tokenIn.value = t;
-        return r.blob();
-      }).then(b => { img.src = URL.createObjectURL(b); });
-    }
-    img.addEventListener('click', refresh);
-    refresh();
+    document.getElementById('setupForm').addEventListener('submit', function(e){
+      e.preventDefault();
+      var f = this, fd = new FormData(f);
+      var err = document.getElementById('err');
+      err.classList.add('hidden');
+      var btn = f.querySelector('button[type=submit]'); btn.disabled = true; var old = btn.textContent; btn.textContent='创建中…';
+      fetch('/setup', { method:'POST', body: fd, headers:{'X-Requested-With':'fetch','Accept':'application/json'} })
+        .then(function(resp){ return resp.json().catch(function(){ return {error:'网络错误'}; }).then(function(j){ return {code:resp.status, j:j}; }); })
+        .then(function(x){
+          btn.disabled=false; btn.textContent=old;
+          if (x.code===200 && x.j.to) { window.location.href = x.j.to; return; }
+          err.textContent = x.j.error || '创建失败'; err.classList.remove('hidden');
+        })
+        .catch(function(){ btn.disabled=false; btn.textContent=old; err.textContent='网络错误'; err.classList.remove('hidden'); });
+    });
   </script>
 </body>
 </html>

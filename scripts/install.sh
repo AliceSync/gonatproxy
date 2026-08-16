@@ -46,7 +46,7 @@ case "$ROLE" in
     systemctl enable --now deepseek-server
     systemctl status deepseek-server --no-pager || true
     echo
-    echo ">> Web console: http://127.0.0.1:8444  (goes through first-run init)"
+    echo ">> Web console: https://<this-server>:8443  (goes through first-run init; ephemeral self-signed TLS by default)"
     ;;
   client)
     RUN_USER="${ARG2:-$(id -un)}"

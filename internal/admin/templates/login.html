@@ -12,38 +12,37 @@
       <div class="logo">◈</div>
       <div>
         <h1>DeepSeek Tunnel</h1>
-        <p>管理控制台</p>
+        <p>管理控制台 · 登录</p>
       </div>
     </div>
-    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
-    <form method="post" action="/login" class="form">
-      <input type="hidden" name="captcha_token" id="captcha_token">
+    <div id="err" class="alert alert-error hidden"></div>
+    <form id="loginForm" class="form" novalidate>
       <label>用户名
         <input type="text" name="username" autocomplete="username" required>
       </label>
       <label>密码
         <input type="password" name="password" autocomplete="current-password" required>
       </label>
-      <label class="captcha-row">
-        <span>验证码</span>
-        <img id="captcha_img" src="/captcha" alt="验证码" title="点击刷新">
-        <input type="text" name="captcha" class="captcha-input" autocomplete="off" required placeholder="输入图中字符">
-      </label>
       <button type="submit" class="btn btn-primary btn-block">登 录</button>
     </form>
   </div>
+
   <script>
-    const img = document.getElementById('captcha_img');
-    const tokenIn = document.getElementById('captcha_token');
-    function refresh(onToken) {
-      fetch('/captcha').then(r => {
-        const t = r.headers.get('X-Captcha-Token');
-        if (t) tokenIn.value = t;
-        return r.blob();
-      }).then(b => { img.src = URL.createObjectURL(b); });
-    }
-    img.addEventListener('click', refresh);
-    refresh(); // load a token+image on page load
+    document.getElementById('loginForm').addEventListener('submit', function(e){
+      e.preventDefault();
+      var f = this, fd = new FormData(f);
+      var err = document.getElementById('err');
+      err.classList.add('hidden');
+      var btn = f.querySelector('button[type=submit]'); btn.disabled = true; var old = btn.textContent; btn.textContent='登录中…';
+      fetch('/login', { method:'POST', body: fd, headers:{'X-Requested-With':'fetch','Accept':'application/json'} })
+        .then(function(resp){ return resp.json().catch(function(){ return {error:'网络错误'}; }).then(function(j){ return {code:resp.status, j:j}; }); })
+        .then(function(x){
+          btn.disabled=false; btn.textContent=old;
+          if (x.code===200 && x.j.to) { window.location.href = x.j.to; return; }
+          err.textContent = x.j.error || '登录失败'; err.classList.remove('hidden');
+        })
+        .catch(function(){ btn.disabled=false; btn.textContent=old; err.textContent='网络错误'; err.classList.remove('hidden'); });
+    });
   </script>
 </body>
 </html>

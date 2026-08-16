@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件管理 - DeepSeek Tunnel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links">
+      <a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files" class="active">文件</a>
+      <a href="/term">终端</a><a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a>
+    </div>
+  </nav>
+  <main class="container">
+    <div class="page-head">
+      <h2>文件管理器</h2>
+      {{if .SelectMode}}<div class="muted">选择模式：点击文件以填入 <code>{{.Field}}</code></div>
+      {{else}}<a class="btn btn-ghost" href="/config">← 返回配置</a>{{end}}
+    </div>
+    <div class="toolbar">
+      <div class="breadcrumb" id="breadcrumb"></div>
+      <div class="toolbar-actions">
+        <input type="text" id="goTo" placeholder="跳转目录 e.g. /etc/deepseek" title="输入绝对路径回车跳转">
+        <button class="btn btn-ghost btn-sm" onclick="cd(document.getElementById('goTo').value)">Go</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('fileUp').click()">上传</button>
+        <button class="btn btn-ghost btn-sm" onclick="mkdir()">新建目录</button>
+        <button class="btn btn-ghost btn-sm" onclick="newFile()">新建文件</button>
+        <input type="file" id="fileUp" class="hidden" multiple>
+      </div>
+    </div>
+    <div id="err" class="alert alert-error hidden"></div>
+    <table class="file-table">
+      <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th style="width:1%">操作</th></tr></thead>
+      <tbody id="listBody"></tbody>
+    </table>
+  </main>
+<script src="/static/files.js"></script>
+</body>
+</html>

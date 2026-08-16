@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服务管理 - DeepSeek Tunnel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files">文件</a>
+      <a href="/term">终端</a><a href="/services" class="active">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
+  </nav>
+  <main class="container">
+    <div class="page-head">
+      <h2>服务管理（systemd）</h2>
+      <span class="muted" id="modeLabel"></span>
+    </div>
+
+    <div id="handoff" class="alert alert-warn hidden">
+      ⚠️ 当前进程<b>不是由 systemd 管理</b>（由 <code>start</code> 守护或前台运行）。
+      点击【启动 start】时，程序会先<b>平滑关闭监听、释放端口</b>，再让 systemd 接管并启动，
+      随后当前进程自动退出 —— 保证 systemd 服务读取的是<b>与控制台相同</b>的配置文件 <code id="handoffCfg"></code>。
+    </div>
+    <div id="res" class="alert hidden"></div>
+
+    <div class="cards" style="margin-top:6px">
+      <div class="card"><div class="card-label">unit 文件</div><div class="card-value" id="svUnit" style="font-size:14px">-</div></div>
+      <div class="card"><div class="card-label">是否已安装</div><div class="card-value" id="svInstalled" style="font-size:14px">-</div></div>
+      <div class="card"><div class="card-label">配置文件（一致）</div><div class="card-value" id="svConfig" style="font-size:13px">-</div></div>
+      <div class="card"><div class="card-label">可执行文件</div><div class="card-value" id="svExe" style="font-size:13px">-</div></div>
+    </div>
+
+    <section class="panel">
+      <h3>unit 文件</h3>
+      <p class="muted">根据<u>当前可执行文件与配置文件路径</u>自动生成 <code>deepseek-server.service</code>，
+      使 systemd 服务读取的配置与控制台<b>完全一致</b>。生成时执行 <code>daemon-reload</code>。</p>
+      <div class="actions">
+        <button class="btn btn-primary" data-act="generate">生成 / 更新 unit 文件</button>
+        <button class="btn btn-ghost" data-act="daemon-reload">daemon-reload</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>启用 与 启动（分开）</h3>
+      <p class="muted"><b>enable</b> 只设置开机自启，<b>不启动</b>；<b>start</b> 才立即启动。二者互不影响。</p>
+      <div class="actions">
+        <button class="btn" data-act="enable">启用 enable（自启）</button>
+        <button class="btn btn-ghost" data-act="disable">禁用 disable</button>
+        <span class="divider"></span>
+        <button class="btn btn-primary" data-act="start">启动 start（立即）</button>
+        <button class="btn btn-danger" data-act="stop">停止 stop</button>
+        <button class="btn btn-ghost" data-act="restart">重启 restart</button>
+        <button class="btn btn-ghost" data-act="status">状态 status</button>
+      </div>
+      <div class="muted" id="svRun">运行用户：-</div>
+    </section>
+
+    <section class="panel">
+      <h3>帮助</h3>
+      <p class="muted">命令行等价操作：<br>
+      <code>systemctl enable deepseek-server</code>（仅自启，不启动）<br>
+      <code>systemctl start deepseek-server</code>（立即启动）<br>
+      或 <code>deepseek-server service install / start / enable</code></p>
+    </section>
+  </main>
+<script>
+(function(){
+  const res = document.getElementById('res');
+  function msg(m, ok){ res.textContent=m; res.className='alert '+(ok?'alert-success':'alert-error'); res.classList.remove('hidden'); setTimeout(()=>res.classList.add('hidden'), ok?8000:12000); }
+  function ctrl(act){
+    fetch('/api/service/control?action='+act,{method:'POST'}).then(r=>r.json()).then(d=>{
+      if(d.error){ msg(d.error, false); } else { msg(d.ok, true); if(d.restarting){ setTimeout(()=>location.reload(), 1800); } }
+    }).catch(e=>msg('网络错误: '+e, false));
+  }
+
+  function refresh(){
+    fetch('/api/service').then(r=>r.json()).then(d=>{
+      document.getElementById('modeLabel').textContent =
+        d.managed ? '✓ 当前由 systemd 管理' : (d.daemon ? 'start 守护进程' : '前台进程');
+      document.getElementById('svUnit').textContent = d.unit || '（未知）';
+      document.getElementById('svInstalled').textContent = d.installed ? '✓ 已安装' : '✗ 未安装';
+      document.getElementById('svConfig').textContent = d.config || '-';
+      document.getElementById('svExe').textContent = d.exe || '-';
+      document.getElementById('svRun').textContent = '运行用户：' + (d.run_user||'-') + '  版本：' + (d.version||'-') + '  进程：' + (d.daemon?'start守护':'前台/'+(d.systemd?'systemd':''));
+      const handoff = document.getElementById('handoff');
+      if (!d.managed && d.systemd) {
+        // non-systemd mode (daemon or foreground) => show handoff banner
+        document.getElementById('handoffCfg').textContent = d.config||'';
+        handoff.classList.remove('hidden');
+      } else {
+        handoff.classList.add('hidden');
+      }
+    }).catch(()=>{});
+  }
+
+  document.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',function(){
+    const act = this.dataset.act;
+    if (act==='generate') {
+      if(!confirm('将根据当前可执行文件/配置路径重新生成 unit 文件并 daemon-reload，继续？')) return;
+      fetch('/api/service/generate',{method:'POST'}).then(r=>r.json()).then(d=>{ d.error?msg(d.error,false):msg(d.ok,true); refresh(); }).catch(e=>msg('网络错误: '+e,false));
+    } else if (act==='start') {
+      if(!confirm('启动 start。若当前不是 systemd 管理的进程，将平滑交接给 systemd 后退出。继续？')) return;
+      ctrl('start');
+    } else if (act==='stop' || act==='restart') {
+      if(!confirm(('停止'===act?'停止服务':'重启服务')+' ？现有连接会断开。')) return;
+      ctrl(act);
+    } else { ctrl(act); }
+  }));
+  refresh();
+})();
+</script>
+</body>
+</html>

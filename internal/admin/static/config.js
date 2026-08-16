@@ -143,7 +143,7 @@
               <input class="s-port" type="number" min="1" max="65535" placeholder="端口" value="${svc.port||''}">
               <input class="s-addr" placeholder="addr（默认 127.0.0.1:port）" value="${esc(svc.addr||'')}">
               <button class="btn btn-danger btn-sm" onclick="delService('${id}',${i})">删除</button>
-            </div>`);
+            </div>`));
         });
       }
       renderSvc();

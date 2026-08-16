@@ -1,8 +1,8 @@
 // Package admin implements the web management console embedded in the server.
 // It provides username/password login, an initialization mode when no
-// account is configured, full configuration editing, a file manager, a shell
-// terminal, service management, and binary update + restart, plus configuration
-// export for the entry client and NAT client.
+// account is configured, full configuration editing, a file manager, service
+// management, and binary update + restart, plus configuration export for the
+// entry client and NAT client.
 package admin
 
 import (
@@ -90,7 +90,7 @@ type Server struct {
 	// ApplyConfig persists + applies a config document from the console.
 	ApplyConfig func(next *config.ServerConfig) error
 
-	// FileRoot restricts the file manager/terminal to a directory. Empty = whole
+	// FileRoot restricts the file manager to a directory. Empty = whole
 	// filesystem. Set by the host to a sensible sandbox for the console.
 	FileRoot string
 	// Hooks provides privileged operations (restart/update).
@@ -157,10 +157,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/files/new", s.requireAuth(s.handleFileNew))
 	mux.HandleFunc("/api/files/mkdir", s.requireAuth(s.handleFileMkdir))
 	mux.HandleFunc("/api/files/delete", s.requireAuth(s.handleFileDelete))
-
-	// terminal
-	mux.HandleFunc("/term", s.requireAuth(s.handleTermPage))
-	mux.HandleFunc("/api/term/run", s.requireAuth(s.handleTermRun))
 
 	// services
 	mux.HandleFunc("/services", s.requireAuth(s.handleServicesPage))

@@ -162,8 +162,6 @@ The server embeds a management console (login = **account + password**):
   and the admin console TLS cert/key) has a **选择** button that opens the file
   manager in *select mode*: pick a server-side file and it is filled into the
   field. This is how you choose certificate files instead of typing a path.
-- **终端 (Terminal)** — a shell (`/bin/bash -c`) that streams output live to the
-  browser. Use it for `systemctl`, `scripts/install.sh`, ACL/permission fixes, etc.
 - **服务 (Services)** — systemd unit management:
   - **生成 / 更新 unit 文件** writes `deepseek-server.service` from the *current*
     executable and config paths (so the service reads the **same config** the

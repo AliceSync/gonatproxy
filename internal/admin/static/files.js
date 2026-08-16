@@ -18,10 +18,10 @@
 
   function render(data) {
     cur = data.path;
-    // breadcrumb
+    // breadcrumb: root '/' then each segment; the CSS adds the '/' separators
     breadcrumb.innerHTML = '<a href="#" data-p="/">/</a>';
     data.crumbs.forEach(c => {
-      const a = document.createElement('a'); a.href='#'; a.textContent='/'+c.name; a.dataset.p=c.path;
+      const a = document.createElement('a'); a.href='#'; a.textContent=c.name; a.dataset.p=c.path;
       breadcrumb.appendChild(a);
     });
     breadcrumb.querySelectorAll('a').forEach(a => a.addEventListener('click', e => { e.preventDefault(); load(a.dataset.p); }));

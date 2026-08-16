@@ -9,7 +9,7 @@
 <body>
   <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
     <div class="nav-links"><a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files">文件</a>
-      <a href="/term">终端</a><a href="/services">服务</a><a href="/system" class="active">系统</a><a href="/logout">退出</a></div>
+      <a href="/services">服务</a><a href="/system" class="active">系统</a><a href="/logout">退出</a></div>
   </nav>
   <main class="container">
     <div class="page-head">
@@ -23,18 +23,23 @@
     </div>
 
     <section class="panel">
-      <h3>更新二进制</h3>
-      <p class="muted">上传新的 <code>deepseek-server</code> 可执行文件；保存后可选"立即应用并重启"。</p>
+      <h3>更新程序</h3>
+      <p class="muted">选择新的 <code>deepseek-server</code> 可执行文件。可先上传暂存，稍后应用到当前程序；也可上传后立即替换并重启。</p>
       <input type="file" id="binFile" class="input-inline">
-      <label class="check-row" style="padding-top:6px"><input type="checkbox" id="restartNow"> 上传后立即应用并重启（mv 替换 + fork 启动）</label>
-      <div class="alert alert-warn hidden" id="restartConfirm">⚠️ 将替换当前程序并重启服务，现有连接会断开。确认继续？</div>
-      <div class="actions"><button class="btn btn-primary" onclick="up1()">上传（仅暂存）</button> <button class="btn btn-danger" onclick="up2()">上传并立即重启</button></div>
-      {{if .Staged}}<div class="muted">已存在暂存更新 —— 在下方点击【应用并重启】生效。</div>{{end}}
+      <label class="check-row" style="padding-top:6px"><input type="checkbox" id="restartNow"> 上传后立即替换并重启（mv 替换 + fork 启动）</label>
       <div class="actions">
-        <button class="btn btn-danger" onclick="applied()">应用暂存更新并重启</button>
-        <button class="btn btn-danger btn-plain" onclick="restartNowFn()">立即重启当前服务</button>
+        <button class="btn btn-primary" onclick="uploadUpdate()">上传更新</button>
+        <button class="btn btn-danger" id="applyBtn" onclick="applyStaged()">应用已上传的更新并重启</button>
       </div>
+      <div class="muted" id="stagedNote"></div>
+    </section>
+
+    <section class="panel">
+      <h3>重启服务</h3>
       <p class="muted" id="restartHint"></p>
+      <div class="actions">
+        <button class="btn btn-danger" onclick="restartNowFn()">立即重启当前服务</button>
+      </div>
     </section>
 
     <div id="res" class="alert hidden"></div>

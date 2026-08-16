@@ -43,8 +43,14 @@
         <label>目标拨号超时秒数
           <input data-f="dial_timeout_seconds" type="number" min="1" value="">
         </label>
-        <label>日志文件（daemon 模式）
+        <label>日志文件（daemon 模式；留空=systemd 用 journal / 默认 <code>server.log</code>）
           <div class="field-row"><input data-f="log_file" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('log_file')">选择</button></div>
+        </label>
+        <label>日志轮转上限（字节，0=默认 100MiB）
+          <input data-f="log_max_bytes" type="text" placeholder="104857600" value="">
+        </label>
+        <label>日志备份数量（0=默认 5）
+          <input data-f="log_max_files" type="number" min="0" max="50" value="">
         </label>
       </div>
     </section>
@@ -98,6 +104,7 @@
     </div>
   </div>
 
+<script src="/static/dialog.js"></script>
 <script src="/static/config.js"></script>
 </body>
 </html>

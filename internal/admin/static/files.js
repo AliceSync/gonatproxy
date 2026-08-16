@@ -96,20 +96,24 @@
   }
 
   function delFile(path){
-    if(!confirm('删除 '+path+' ？此操作不可撤销。')) return;
-    fetch('/api/files/delete?path='+encodeURIComponent(path)).then(r=>r.json()).then(d=>{ if(!d.ok){showErr(d.error);} load(cur); }).catch(e=>showErr('删除失败'));
+    DSH.confirm('删除 ' + path + ' ？\n此操作不可撤销。', {danger:true, okText:'删除'}).then(ok=>{
+      if(!ok) return;
+      fetch('/api/files/delete?path='+encodeURIComponent(path)).then(r=>r.json()).then(d=>{ if(!d.ok){showErr(d.error);} load(cur); }).catch(e=>showErr('删除失败'));
+    });
   }
   window.mkdir = ()=>{
-    const p = prompt('新目录绝对路径（在当前目录下则填相对名）', cur+'/newdir');
-    if(!p) return;
-    fetch('/api/files/mkdir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p.replace(/\/+$/,'')})})
-      .then(r=>r.json()).then(d=>{ if(!d.ok) showErr(d.error||'失败'); load(cur); }).catch(e=>showErr('创建失败'));
+    DSH.prompt('新目录绝对路径（在当前目录下则填相对名）', cur+'/newdir', {okText:'创建'}).then(p=>{
+      if(!p) return;
+      fetch('/api/files/mkdir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p.replace(/\/+$/,'')})})
+        .then(r=>r.json()).then(d=>{ if(!d.ok) showErr(d.error||'失败'); load(cur); }).catch(e=>showErr('创建失败'));
+    });
   };
   window.newFile = ()=>{
-    const p = prompt('新文件绝对路径', cur+'/newfile');
-    if(!p) return;
-    fetch('/api/files/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})})
-      .then(r=>r.json()).then(d=>{ if(!d.ok) showErr(d.error||'失败'); load(cur); }).catch(e=>showErr('创建失败'));
+    DSH.prompt('新文件绝对路径', cur+'/newfile', {okText:'创建'}).then(p=>{
+      if(!p) return;
+      fetch('/api/files/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})})
+        .then(r=>r.json()).then(d=>{ if(!d.ok) showErr(d.error||'失败'); load(cur); }).catch(e=>showErr('创建失败'));
+    });
   };
 
   document.getElementById('fileUp').addEventListener('change', function(e){

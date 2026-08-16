@@ -61,8 +61,15 @@ type ServerConfig struct {
 	KeyFile            string `json:"key_file"`
 	CertCheckSeconds   int    `json:"cert_check_seconds"`
 	DialTimeoutSeconds int    `json:"dial_timeout_seconds"`
-	// LogFile is where the daemonized ('start') server writes its log.
+	// LogFile is where the daemonized ('start') server writes its log. May be
+	// left empty: when running under systemd (ExecStart in foreground) logs go
+	// to the journal, and a `start` daemon falls back to <config dir>/server.log.
 	LogFile string `json:"log_file,omitempty"`
+	// LogMaxBytes limits how large LogFile may grow before it is rotated.
+	// 0 or negative => default 100 MiB. Rotation keeps LogMaxFiles backups.
+	LogMaxBytes int64 `json:"log_max_bytes,omitempty"`
+	// LogMaxFiles is how many rotated log backups to keep (0 => default 5).
+	LogMaxFiles int `json:"log_max_files,omitempty"`
 	// PublicAddr is the server's publicly reachable address (host:port) used
 	// when generating entry/NAT client configs for export.
 	PublicAddr string `json:"public_addr,omitempty"`
@@ -100,6 +107,15 @@ func (c *ServerConfig) Normalize() {
 	}
 	if c.DialTimeoutSeconds <= 0 {
 		c.DialTimeoutSeconds = 10
+	}
+	if c.LogMaxBytes <= 0 {
+		c.LogMaxBytes = 100 << 20 // 100 MiB
+	}
+	if c.LogMaxFiles <= 0 {
+		c.LogMaxFiles = 5
+	}
+	if c.LogMaxFiles > 50 {
+		c.LogMaxFiles = 50
 	}
 	if c.Admin == nil {
 		c.Admin = &Admin{}

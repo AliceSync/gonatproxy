@@ -1,7 +1,9 @@
 package main
 
 // daemonize re-executes the server detached from the terminal so it runs in the
-// background, logging to the configured log file (or a sensible default).
+// background. Logging is done by `run` via a self-rotating log file; here we
+// just resolve the log path/settings and pass them to the child through env,
+// then return. The child writes to (and rotates) the resolved log file.
 
 import (
 	"fmt"
@@ -9,73 +11,74 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"strings"
 	"syscall"
 
 	"deepseekaiworker/internal/config"
 )
 
-// resolveLogFile picks where a daemonized server logs.
-func resolveLogFile(cfg *config.ServerConfig, cfgPath string, missing bool) string {
+// resolveLogFile picks where a daemonized server logs: the configured log_file,
+// else the default <config dir>/server.log (which supports rotation).
+func resolveLogFile(cfg *config.ServerConfig, cfgPath string) string {
 	if cfg != nil && cfg.LogFile != "" {
 		return cfg.LogFile
 	}
-	// default: <config dir>/server.log
-	dir := filepath.Dir(cfgPath)
-	return filepath.Join(dir, "server.log")
+	return defaultLogDir(cfgPath)
 }
 
-// daemonize forks a background child running "run" with the given config and
-// exits the parent. When config is missing, the child runs in init mode (the
-// web console), which is exactly what we want for first-time setup.
 func daemonize(cfgPath string, cfg *config.ServerConfig, missing bool) {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "/usr/local/bin/deepseek-server"
 	}
 
-	logFile := resolveLogFile(cfg, cfgPath, missing)
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		log.Fatalf("daemonize: cannot open log file %s: %v", logFile, err)
+	logFile := resolveLogFile(cfg, cfgPath)
+	maxBytes, maxFiles := int64(100<<20), 5
+	if cfg != nil {
+		maxBytes, maxFiles = cfg.LogMaxBytes, cfg.LogMaxFiles
 	}
-	// ensure our own startup messages go to the daemon log too
-	log.SetOutput(f)
 
+	// Child will own + rotate the log file itself. Bypass the parent TTY so the
+	// daemon detaches cleanly; run() re-routes stdout/stderr to the rotator.
 	cmd := exec.Command(exe, "run", "-config", cfgPath)
-	cmd.Stdout = f
-	cmd.Stderr = f
 	cmd.Stdin = nil
-	cmd.Env = append(os.Environ(), "DEEPSEEK_DAEMON=1")
+	cmd.Env = append(os.Environ(),
+		"DEEPSEEK_DAEMON=1",
+		"DEEPSEEK_LOG_FILE="+logFile,
+		fmt.Sprintf("DEEPSEEK_LOG_MAX=%d", maxBytes),
+		fmt.Sprintf("DEEPSEEK_LOG_FILES=%d", maxFiles),
+	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("daemonize: start: %v", err)
 	}
-	addr := cfgListen(cfg)
 	fmt.Printf("deepseek-server running in background: pid=%d log=%s\n", cmd.Process.Pid, logFile)
-	fmt.Printf("web console available at https://127.0.0.1%s (or per config)\n", addr)
+	fmt.Printf("web console available at https://%s (or per config)\n", cfgListen(cfg))
 
 	// Detach: release the child from this process group without waiting.
 	_ = cmd.Process.Release()
 }
 
-// cfgListen returns the console listen address (host part trimmed).
+// cfgListen returns a usable host:port for the console, defaulting the host to
+// 127.0.0.1 (never a bare ':port').
 func cfgListen(cfg *config.ServerConfig) string {
-	admin := ""
+	addr := ""
 	if cfg != nil && cfg.Admin != nil {
-		admin = cfg.Admin.Listen
+		addr = cfg.Admin.Listen
 	}
-	addr := admin
 	if addr == "" {
-		addr = ":8443"
 		if cfg != nil && cfg.Listen != "" {
 			addr = cfg.Listen
+		} else {
+			addr = ":8443"
 		}
 	}
 	host, port, err := net.SplitHostPort(addr)
-	_ = err
-	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		return ":" + port
+	if err != nil {
+		return strings.TrimPrefix(addr, ":")
 	}
-	return addr
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }

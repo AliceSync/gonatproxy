@@ -31,31 +31,38 @@
     const f = fileInput.files[0];
     if (!f){ msg('请先选择要上传的程序文件', false); return; }
     const doRestart = restartCheck.checked;
-    if (doRestart && !confirm('⚠️ 将替换当前程序并立即重启，现有连接会断开。确定继续？')) return;
-    const fd = new FormData();
-    fd.append('file', f);
-    fd.append('restart', doRestart ? '1':'0');
-    fd.append('apply', doRestart ? '1':'0');
-    msg(doRestart ? '正在替换并重启…' : '正在上传（暂存）…', true);
-    fetch('/api/system/update', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{
-      if (d.ok){ msg(d.ok, true); if (d.restarting) setTimeout(()=>location.href='/dashboard', 2500); else refreshStatus(); }
-      else msg(d.error || '上传失败', false);
-    }).catch(e=>msg('网络错误: '+e, false));
+    const doWork = () => {
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('restart', doRestart ? '1':'0');
+      fd.append('apply', doRestart ? '1':'0');
+      msg(doRestart ? '正在替换并重启…' : '正在上传（暂存）…', true);
+      fetch('/api/system/update', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{
+        if (d.ok){ msg(d.ok, true); if (d.restarting) setTimeout(()=>location.href='/dashboard', 2500); else refreshStatus(); }
+        else msg(d.error || '上传失败', false);
+      }).catch(e=>msg('网络错误: '+e, false));
+    };
+    if (doRestart) DSH.confirm('将替换当前程序并立即重启（mv 替换 + fork 启动），现有连接会断开。\n确定继续？', {danger:true, okText:'替换并重启'}).then(ok=>{ if(ok) doWork(); });
+    else doWork();
   }
 
   function applyStaged(){
-    if(!confirm('应用已上传的更新并重启？此操作会替换当前程序，现有连接会断开。')) return;
-    fetch('/api/system/apply', {method:'POST'}).then(r=>r.json()).then(d=>{
-      if (d.ok){ msg(d.ok, true); if (d.restarting) setTimeout(()=>location.href='/dashboard', 2500); }
-      else msg(d.error || '应用失败', false);
-    }).catch(e=>msg('网络错误: '+e, false));
+    DSH.confirm('应用已上传的更新并重启？此操作会替换当前程序，现有连接会断开。', {danger:true, okText:'应用并重启'}).then(ok=>{
+      if(!ok) return;
+      fetch('/api/system/apply', {method:'POST'}).then(r=>r.json()).then(d=>{
+        if (d.ok){ msg(d.ok, true); if (d.restarting) setTimeout(()=>location.href='/dashboard', 2500); }
+        else msg(d.error || '应用失败', false);
+      }).catch(e=>msg('网络错误: '+e, false));
+    });
   }
 
   function restartNowFn(){
-    if(!confirm('立即重启当前服务？现有连接会断开。')) return;
-    fetch('/api/system/restart', {method:'POST'}).then(r=>r.json()).then(d=>{
-      msg(d.ok || '正在重启…', true); if (d.restarting) setTimeout(()=>location.href='/dashboard', 2500);
-    }).catch(e=>msg('网络错误: '+e, false));
+    DSH.confirm('立即重启当前服务？现有连接会断开。', {danger:true, okText:'立即重启'}).then(ok=>{
+      if(!ok) return;
+      fetch('/api/system/restart', {method:'POST'}).then(r=>r.json()).then(d=>{
+        msg(d.ok || '正在重启…', true); if (d.restarting) setTimeout(()=>location.href='/dashboard', 2500);
+      }).catch(e=>msg('网络错误: '+e, false));
+    });
   }
 
   window.uploadUpdate = uploadUpdate;

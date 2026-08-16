@@ -4,12 +4,14 @@
   "key_file": "",
   "cert_check_seconds": 30,
   "dial_timeout_seconds": 10,
+  "log_max_bytes": 104857600,
+  "log_max_files": 5,
   "clients": {},
   "routes": null,
   "admin": {
     "listen": "",
     "tls": false,
     "username": "admin",
-    "password_hash": "pbkdf2-sha256$210000$UI/wSXXa3tLp2ecH4Qd1Qw$X69TTkquf1EQbcNQ5HeYgi3gKpA6zUq1cs3XHbwsnLw"
+    "password_hash": "pbkdf2-sha256$210000$E+7sOr+LG5iZwcFcIHwnBw$jfWYII8Mg6r4WuigluvakNhEznVV2ljmnOwvipo4nuA"
   }
 }

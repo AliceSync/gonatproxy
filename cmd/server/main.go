@@ -30,6 +30,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -302,6 +303,7 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	setupLogging(sc, cfgPath)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -478,4 +480,50 @@ func startRelay(sc *config.ServerConfig, rt *runtime, ctx context.Context, tlsCf
 		}
 		go handleConnection(conn, rt)
 	}
+}
+
+// setupLogging routes process output through a size-capped, rotating log file
+// when one is in use (explicit log_file, or a `start` daemon's resolved path).
+// If no log file applies (foreground / running under systemd with no log_file)
+// logs stay on the process's own stdout/stderr — i.e. the systemd journal.
+func setupLogging(sc *config.ServerConfig, cfgPath string) {
+	logPath := ""
+	if sc != nil && sc.LogFile != "" {
+		logPath = sc.LogFile
+	} else if e := os.Getenv("DEEPSEEK_LOG_FILE"); e != "" {
+		logPath = e
+	}
+	if logPath == "" {
+		return // no file: log to stderr (foreground or systemd journald)
+	}
+	maxBytes := int64(100 << 20)
+	maxFiles := 5
+	if sc != nil {
+		if sc.LogMaxBytes > 0 {
+			maxBytes = sc.LogMaxBytes
+		}
+		if sc.LogMaxFiles > 0 {
+			maxFiles = sc.LogMaxFiles
+		}
+	}
+	if v := os.Getenv("DEEPSEEK_LOG_MAX"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			maxBytes = n
+		}
+	}
+	if v := os.Getenv("DEEPSEEK_LOG_FILES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			maxFiles = n
+		}
+	}
+	w, err := openLog(logPath, maxBytes, maxFiles)
+	if err != nil {
+		if os.Getenv("DEEPSEEK_DAEMON") == "1" {
+			log.Fatalf("daemon: cannot open log %s: %v", logPath, err)
+		}
+		log.Printf("warning: cannot open log %s: %v (logging to stderr)", logPath, err)
+		return
+	}
+	log.SetOutput(w)
+	log.Printf("log file: %s (rotation %.0f MiB, %d backups)", logPath, float64(maxBytes)/1024/1024, maxFiles)
 }

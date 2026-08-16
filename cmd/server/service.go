@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -33,18 +34,32 @@ func serviceUnitDir() string {
 func serviceUnitName() string { return "deepseek-server.service" }
 func serviceUnitPath() string { return filepath.Join(serviceUnitDir(), serviceUnitName()) }
 
-// hostSystemdActive reports whether this host runs systemd (not whether THIS
-// process is a systemd service).
+// hostSystemdActive reports whether this host runs systemd (the manager is
+// available on this machine — not whether THIS process is a systemd service).
+// Sample-config-free and based only on the well-known runtime marker.
 func hostSystemdActive() bool {
-	if os.Getenv("INVOCATION_ID") != "" {
-		return true
-	}
 	_, err := os.Stat("/run/systemd/system")
 	return err == nil
 }
 
-// underSystemd reports whether the current process is itself a systemd service.
-func underSystemd() bool { return os.Getenv("INVOCATION_ID") != "" }
+// systemdOwnsUs reports whether the *unit we manage* is installed, active AND
+// its MainPID equals this process. This is the reliable way to know "I am the
+// running systemd-deepseek-server.service" and cannot be fooled by an inherited
+// INVOCATION_ID (e.g. under `go run` from a shell inside a systemd session).
+func systemdOwnsUs() bool {
+	if !fileExists(serviceUnitPath()) {
+		return false
+	}
+	out, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", serviceUnitName()).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	pid, aerr := strconv.Atoi(strings.TrimSpace(string(out)))
+	if aerr != nil || pid <= 0 {
+		return false
+	}
+	return pid == os.Getpid()
+}
 
 // currentRunUser resolves the account the service should run as.
 func currentRunUser() (name, group string) {
@@ -143,8 +158,8 @@ func serviceInspect(cfgPath string) admin.ServiceInspect {
 		Unit:      serviceUnitName(),
 		Installed: fileExists(serviceUnitPath()),
 		Systemd:   hostSystemdActive(),
-		Managed:   underSystemd(),
-		Daemon:    os.Getenv("DEEPSEEK_DAEMON") == "1" && !underSystemd(),
+		Managed:   systemdOwnsUs(),
+		Daemon:    os.Getenv("DEEPSEEK_DAEMON") == "1" && !systemdOwnsUs(),
 		Exe:       exe,
 		Config:    cfgPath,
 		RunUser:   u,
@@ -200,14 +215,14 @@ func controlService(cfgPath string, action string) (admin.ServiceResult, error) 
 	// current process is NOT under systemd (it was `start`-daemonized or run in
 	// the foreground), a plain systemctl start would fail because WE still hold
 	// the port. So we gracefully hand it over first.
-	if action == "start" && !underSystemd() {
+	if action == "start" && !systemdOwnsUs() {
 		return handoffToSystemd()
 	}
 
 	// stop/restart while NOT systemd-managed: there is no systemd-owned live
 	// unit to control; a plain systemctl would be wrong. Point at the fork-based
 	// restart (system page) or enable+start to become systemd-managed first.
-	if (action == "stop" || action == "restart") && !underSystemd() {
+	if (action == "stop" || action == "restart") && !systemdOwnsUs() {
 		return admin.ServiceResult{}, fmt.Errorf("当前进程并非由 systemd 管理，无法用 systemctl %s。请在【系统】页使用“立即重启”（fork），或在【服务】页先【启动 start】交接给 systemd 后再重启/停止。", action)
 	}
 

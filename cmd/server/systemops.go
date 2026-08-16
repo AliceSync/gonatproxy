@@ -67,7 +67,7 @@ func buildAdminHooks(cfgPath string) *admin.SystemHooks {
 		}
 		// Under systemd, restarting should go through systemd so it keeps owning
 		// the unit; forking our own copy would orphan a second instance.
-		if underSystemd() {
+		if systemdOwnsUs() {
 			log.Printf("restart requested; delegating to systemctl restart %s", serviceUnitName())
 			if out, err := sysctlOutput("restart", serviceUnitName()); err != nil {
 				return fmt.Errorf("systemctl restart: %s", out)

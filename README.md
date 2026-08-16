@@ -129,6 +129,18 @@ Flags: -config <path>   (default config.json; works before or after the subcomma
   only the web console (over **HTTPS** with an in-memory self-signed cert) so
   you can create an account, edit and generate a config, then start normally.
 
+## Logging (optional, size-capped)
+
+- **No `log_file` configured?** Completely optional:
+  - running foreground (or under systemd) → logs go to the process's
+    stdout/stderr, i.e. the **systemd journal** under systemd;
+  - running daemonized via `start` → an implicit `<config dir>/server.log`
+    is used so the background process still has a place to log.
+- **`log_max_bytes`** (default 100 MiB) caps how large the log grows; once
+  exceeded it **rotates** to `server.log.1 → .2 → …`, keeping
+  **`log_max_files`** (default 5) backups. Set `log_max_bytes: 0` to disable
+  rotation. Both are editable in the 配置 page.
+
 ## Web console
 
 The server embeds a management console (login = **account + password**):
@@ -188,6 +200,11 @@ deepseek-server service start     # start now (graceful handoff)
 deepseek-server service status
 deepseek-server service show      # print the unit that would be installed
 ```
+
+> **进程模式判定**：页面上"前台进程 / start 守护进程 / systemd 管理"按真实
+> 状态判定——"systemd 管理"仅当 `deepseek-server.service` 已安装、活跃且
+> 其 `MainPID` 等于当前进程 pid 时为真（不再仅凭环境变量 `INVOCATION_ID`
+> 猜测），所以即使用 `go run` 启动也正确显示为"前台进程"。
 
 ## Install as systemd services
 

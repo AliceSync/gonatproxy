@@ -10,7 +10,9 @@
       'cert_file': cfg.cert_file || '', 'key_file': cfg.key_file || '',
       'cert_check_seconds': cfg.cert_check_seconds || 30,
       'dial_timeout_seconds': cfg.dial_timeout_seconds || 10,
-      'log_file': cfg.log_file || ''
+      'log_file': cfg.log_file || '',
+      'log_max_bytes': cfg.log_max_bytes || '',
+      'log_max_files': cfg.log_max_files || ''
     };
     document.querySelectorAll('input[data-f]').forEach(inp => {
       const f = inp.dataset.f;
@@ -40,6 +42,11 @@
     cfg.cert_check_seconds = parseInt(m.cert_check_seconds) || 30;
     cfg.dial_timeout_seconds = parseInt(m.dial_timeout_seconds) || 10;
     cfg.log_file = m.log_file;
+    cfg.log_max_bytes = parseInt(m.log_max_bytes) || 0;
+    cfg.log_max_files = parseInt(m.log_max_files) || 0;
+    if (m.log_file === '') delete cfg.log_file;
+    if (cfg.log_max_bytes <= 0) delete cfg.log_max_bytes;
+    if (cfg.log_max_files <= 0) delete cfg.log_max_files;
   }
 
   function row(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
@@ -51,7 +58,8 @@
     renderRoutes();
   };
   window.delRoute = function (i) {
-    cfg.routes.splice(i, 1); renderRoutes();
+    const nm = cfg.routes[i] && cfg.routes[i].name;
+    DSH.confirm('删除路由“' + (nm||i) + '”？', {danger:true, okText:'删除'}).then(ok=>{ if(ok){ cfg.routes.splice(i, 1); renderRoutes(); } });
   };
   function renderRoutes() {
     const box = $('#routeRows'); box.innerHTML = '';
@@ -101,13 +109,18 @@
 
   window.addClient = function () {
     if (!cfg.clients) cfg.clients = {};
-    const id = prompt('NAT 客户端 ID（新，唯一）', 'nat-' + (Object.keys(cfg.clients).length + 1));
-    if (!id) return;
-    cfg.clients[id] = { secret: '', services: [] };
-    renderClients();
+    DSH.prompt('NAT 客户端 ID（新，唯一）', 'nat-' + (Object.keys(cfg.clients).length + 1), {okText:'添加'}).then(id=>{
+      if (!id || !id.trim()) return;
+      id = id.trim();
+      if (cfg.clients[id]){ DSH.alert('已存在同名 NAT 客户端：'+id); return; }
+      cfg.clients[id] = { secret: '', services: [] };
+      renderClients();
+    });
   };
   window.delClient = function (id) {
-    delete cfg.clients[id]; renderClients();
+    DSH.confirm('删除 NAT 客户端 ' + id + ' 及其全部服务？', {danger:true, okText:'删除'}).then(ok=>{
+      if(!ok) return; delete cfg.clients[id]; renderClients();
+    });
   };
   window.addService = function (id) {
     if (!cfg.clients[id].services) cfg.clients[id].services = [];
@@ -115,7 +128,7 @@
     renderClients();
   };
   window.delService = function (id, i) {
-    cfg.clients[id].services.splice(i, 1); renderClients();
+    DSH.confirm('删除服务？', {danger:true, okText:'删除'}).then(ok=>{ if(ok){ cfg.clients[id].services.splice(i, 1); renderClients(); } });
   };
   function renderClients() {
     const box = $('#clientRows'); box.innerHTML = '';

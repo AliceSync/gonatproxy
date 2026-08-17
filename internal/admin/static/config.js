@@ -89,6 +89,13 @@
       el.querySelector('.r-mode').value = mode;
       applyMode(el, mode);
       el.querySelector('.r-mode').addEventListener('change', e => applyMode(el, e.target.value));
+      // Write edits straight back to cfg.routes[i] so re-rendering (e.g. adding
+      // another row) never wipes what the user already typed.
+      el.querySelector('.r-name').addEventListener('input', e => r.name = e.target.value);
+      el.querySelector('.r-port').addEventListener('input', e => r.listen_port = parseInt(e.target.value) || 0);
+      el.querySelector('.r-target').addEventListener('input', e => r.target = e.target.value);
+      el.querySelector('.r-natclient').addEventListener('input', e => r.nat_client = e.target.value);
+      el.querySelector('.r-service').addEventListener('input', e => r.service = e.target.value);
     });
   }
   function applyMode(el, mode) {
@@ -159,10 +166,15 @@
           servDiv.appendChild(row(`
             <div class="svc-row">
               <input class="s-name" placeholder="名称" value="${esc(svc.name||'')}">
-              <input class="s-port" type="number" min="1" max="65535" placeholder="端口" value="${svc.port||''}">
-              <input class="s-addr" placeholder="addr（默认 127.0.0.1:port）" value="${esc(svc.addr||'')}">
+              <input class="s-port" type="number" min="1" max="65535" placeholder="本地后端端口(非监听)" value="${svc.port||''}">
+              <input class="s-addr" placeholder="本地地址(默认 127.0.0.1:端口)" value="${esc(svc.addr||'')}">
               <button class="btn btn-danger btn-sm" onclick="delService('${id}',${i})">删除</button>
             </div>`));
+          const rowEl = servDiv.lastChild;
+          // keep edits in cfg.clients live so re-render (add service/client) doesn't lose them
+          rowEl.querySelector('.s-name').addEventListener('input', e => svc.name = e.target.value);
+          rowEl.querySelector('.s-port').addEventListener('input', e => svc.port = parseInt(e.target.value) || 0);
+          rowEl.querySelector('.s-addr').addEventListener('input', e => svc.addr = e.target.value);
         });
       }
       renderSvc();

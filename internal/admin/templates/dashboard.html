@@ -41,6 +41,45 @@
     </div>
 
     <section class="panel">
+      <h3>实时指标（每秒刷新）</h3>
+      <div class="cards" style="margin-top:8px">
+        <div class="card"><div class="card-label">总连接数</div><div class="card-value"><span id="mTotal">-</span></div></div>
+        <div class="card"><div class="card-label">入口客户端</div><div class="card-value" id="mEntry">-</div></div>
+        <div class="card"><div class="card-label">NAT 客户端</div><div class="card-value" id="mNat">-</div></div>
+        <div class="card"><div class="card-label">下行带宽</div><div class="card-value" id="mDown" style="font-size:16px">-</div></div>
+        <div class="card"><div class="card-label">上行带宽</div><div class="card-value" id="mUp" style="font-size:16px">-</div></div>
+      </div>
+      <p class="muted" id="mTotalTp">总吞吐：-</p>
+      <svg id="spark" width="100%" height="64" preserveAspectRatio="none" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px"></svg>
+    </section>
+    <script>
+    (function(){
+      var cur = []; // last N total-bps samples
+      function fmt(b){ if(b>=1048576) return (b/1048576).toFixed(2)+' MB/s'; if(b>=1024) return (b/1024).toFixed(1)+' KB/s'; return b+' B/s'; }
+      function draw(){
+        var svg=document.getElementById('spark'); if(cur.length<2){svg.innerHTML='';return;}
+        var w=svg.clientWidth||600, h=64, max=Math.max.apply(null,cur)||1;
+        var pts=cur.map(function(v,i){ var x=i/(cur.length-1)*w; var y=h-(v/max)*(h-6)-3; return x.toFixed(1)+','+y.toFixed(1); }).join(' ');
+        svg.innerHTML='<polyline fill="none" stroke="#4fd1a3" stroke-width="1.5" points="'+pts+'"/>';
+      }
+      function tick(){
+        fetch('/api/metrics').then(r=>r.json()).then(d=>{
+          document.getElementById('mTotal').textContent=d.total;
+          document.getElementById('mEntry').textContent=d.entry;
+          document.getElementById('mNat').textContent=d.nat;
+          document.getElementById('mUp').textContent=fmt(d.up||0);
+          document.getElementById('mDown').textContent=fmt(d.down||0);
+          document.getElementById('mTotalTp').textContent='总吞吐：' + fmt((d.up||0)+(d.down||0));
+          cur.push((d.up||0)+(d.down||0)); if(cur.length>60) cur.shift();
+          draw();
+        }).catch(()=>{});
+      }
+      tick(); setInterval(tick,1000);
+      window.addEventListener('resize', draw);
+    })();
+    </script>
+
+    <section class="panel">
       <h3>转发路由</h3>
       <table>
         <thead><tr><th>名称</th><th>入口端口</th><th>目的地</th></tr></thead>

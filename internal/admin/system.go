@@ -303,3 +303,12 @@ func boolStr(b bool) string {
 	}
 	return "0"
 }
+
+// handleMetrics returns the live connection/bandwidth snapshot for the dashboard.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if h := s.hooks(); h != nil && h.Metrics != nil {
+		writeJSON(w, http.StatusOK, h.Metrics())
+		return
+	}
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "metrics not available"})
+}

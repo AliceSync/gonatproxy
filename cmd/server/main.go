@@ -305,6 +305,7 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 	defer cancel()
 
 	setupLogging(sc, cfgPath)
+	go runMetricsDaemon(ctx)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

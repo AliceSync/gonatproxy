@@ -94,6 +94,7 @@ func buildAdminHooks(cfgPath string) *admin.SystemHooks {
 		Generate: serviceGenerateSafe(cfgPath),
 		Control:  func(action string) (admin.ServiceResult, error) { return controlService(cfgPath, action) },
 	}
+	h.Metrics = metricSnapshot
 	return h
 }
 

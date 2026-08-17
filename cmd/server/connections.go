@@ -51,6 +51,8 @@ func handleConnection(conn net.Conn, rt *runtime) {
 }
 
 func handleEntry(m *mux.Mux, conn net.Conn, rt *runtime) {
+	metricEntryInc()
+	defer metricEntryDec()
 	client := conn.RemoteAddr().String()
 	log.Printf("entry client connected: %s", client)
 
@@ -122,6 +124,8 @@ func handleNATRoute(s *mux.Stream, client string, route config.Route, rt *runtim
 }
 
 func handleNAT(m *mux.Mux, conn net.Conn, rt *runtime, reg mux.Register) {
+	metricNatInc()
+	defer metricNatDec()
 	client := conn.RemoteAddr().String()
 	if reg.ClientID == "" {
 		log.Printf("NAT client %s: missing client_id", client)

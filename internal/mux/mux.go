@@ -410,6 +410,7 @@ func (s *Stream) Relay(local net.Conn) {
 		for {
 			n, err := local.Read(buf)
 			if n > 0 {
+				addUp(n)
 				if _, werr := s.Write(buf[:n]); werr != nil {
 					break
 				}
@@ -427,6 +428,7 @@ func (s *Stream) Relay(local net.Conn) {
 		for {
 			n, err := s.Read(buf)
 			if n > 0 {
+				addDown(n)
 				if _, werr := local.Write(buf[:n]); werr != nil {
 					break
 				}
@@ -464,6 +466,7 @@ func BridgeStreams(a, b *Stream) {
 		for {
 			n, err := a.Read(buf)
 			if n > 0 {
+				addUp(n)
 				if _, werr := b.Write(buf[:n]); werr != nil {
 					break
 				}
@@ -480,6 +483,7 @@ func BridgeStreams(a, b *Stream) {
 		for {
 			n, err := b.Read(buf)
 			if n > 0 {
+				addDown(n)
 				if _, werr := a.Write(buf[:n]); werr != nil {
 					break
 				}

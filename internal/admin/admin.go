@@ -44,6 +44,27 @@ type SystemHooks struct {
 	// Service provides systemd unit generation + lifecycle control. When nil the
 	// services page hides the generate/control UI.
 	Service *ServiceHooks
+	// Metrics returns live connection/bandwidth counters for the dashboard
+	// (nil hides the live metrics panel).
+	Metrics func() ConnMetrics
+}
+
+// RatePoint is one 1-second sample of relay throughput + active connections.
+type RatePoint struct {
+	T     int64 `json:"t"`
+	Up    int64 `json:"up"`    // bytes relayed up this second
+	Down  int64 `json:"down"`  // bytes relayed down this second
+	Conns int64 `json:"conns"` // total active relay connections
+}
+
+// ConnMetrics is the live dashboard snapshot.
+type ConnMetrics struct {
+	Entry   int64       `json:"entry"` // active entry (client) connections
+	Nat     int64       `json:"nat"`   // active NAT client connections
+	Total   int64       `json:"total"` // entry + nat
+	Up      int64       `json:"up"`    // current up bytes/sec
+	Down    int64       `json:"down"`  // current down bytes/sec
+	History []RatePoint `json:"history"`
 }
 
 // ServiceInspect describes the current process/systemd state for the services
@@ -175,6 +196,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/service", s.requireAuth(s.handleServiceInspect))
 	mux.HandleFunc("/api/service/generate", s.requireAuth(s.handleServiceGenerate))
 	mux.HandleFunc("/api/service/control", s.requireAuth(s.handleServiceControl))
+
+	// live metrics
+	mux.HandleFunc("/api/metrics", s.requireAuth(s.handleMetrics))
 
 	// system / update
 	mux.HandleFunc("/system", s.requireAuth(s.handleSystemPage))

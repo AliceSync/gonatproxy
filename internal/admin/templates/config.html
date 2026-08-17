@@ -66,6 +66,13 @@
 
     <section class="panel">
       <h3>NAT 客户端（id → secret + 服务）</h3>
+      <p class="muted" style="margin-top:0">
+        「服务」里的<b>端口</b>是<b>运行 <code>deepseek-natclient</code> 的那台主机</b>上
+        <b>本地后端服务</b>所占用的端口：NAT 客户端进程<b>不监听</b>它，而是在收到转发时去
+        <code>dial 127.0.0.1:&lt;端口&gt;</code>（或 <code>addr</code> 指定的地址）接通本地服务。
+        这里的端口/服务名会被导出到 <code>natclient.json</code> 供那台主机使用；它和路由里的
+        「入口端口」（入口 <code>client</code> 上要监听的本地端口）是两回事。
+      </p>
       <div id="clientRows"></div>
       <button class="btn btn-ghost btn-sm" onclick="addClient()">+ 添加 NAT 客户端</button>
     </section>

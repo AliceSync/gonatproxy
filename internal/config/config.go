@@ -70,6 +70,10 @@ type ServerConfig struct {
 	LogMaxBytes int64 `json:"log_max_bytes,omitempty"`
 	// LogMaxFiles is how many rotated log backups to keep (0 => default 5).
 	LogMaxFiles int `json:"log_max_files,omitempty"`
+	// DeployDir is where the compiled binaries (deepseek-server/client/
+	// natclient) live, used by the console 部署助手 to hand binaries to
+	// entry/NAT hosts. Empty => auto-detect next to the running server binary.
+	DeployDir string `json:"deploy_dir,omitempty"`
 	// PublicAddr is the server's publicly reachable address (host:port) used
 	// when generating entry/NAT client configs for export.
 	PublicAddr string `json:"public_addr,omitempty"`
@@ -127,11 +131,10 @@ func (c *ServerConfig) Normalize() {
 	}
 }
 
-// Validate checks a config document (after defaults applied).
+// Validate checks a config document (after defaults applied). Empty routes are
+// allowed: the server then runs only the web console (relay disabled), so the
+// admin can finish setup and add routes later without a fatal error.
 func (c *ServerConfig) Validate() error {
-	if len(c.Routes) == 0 {
-		return errors.New("'routes' must not be empty")
-	}
 	seen := map[int]string{}
 	for _, r := range c.Routes {
 		if r.Name == "" {

@@ -93,6 +93,8 @@ type Server struct {
 	// FileRoot restricts the file manager to a directory. Empty = whole
 	// filesystem. Set by the host to a sensible sandbox for the console.
 	FileRoot string
+	// DeployDir is where compiled binaries are found for the 部署助手 ("" disables).
+	DeployDir string
 	// Hooks provides privileged operations (restart/update).
 	Hooks *SystemHooks
 
@@ -102,6 +104,12 @@ type Server struct {
 	// login attempts rate limiting
 	attempts   map[string]*rateEntry // keyed by client IP
 	attemptsMu sync.Mutex
+
+	// short-lived deploy tokens used by the 部署助手 commands (target hosts have
+	// no session, so a bearer token grants one-time-ish access to binaries/cfg).
+	deployMu     sync.Mutex
+	deployTok    map[string]time.Time // token -> expiry
+	deployTokTTL time.Duration
 
 	tmpl *template.Template
 }
@@ -113,13 +121,15 @@ type rateEntry struct {
 
 func New(cfgPath string, get func() *config.ServerConfig, apply func(*config.ServerConfig) error, reload func() error) *Server {
 	s := &Server{
-		ConfigPath:  cfgPath,
-		Reload:      reload,
-		GetConfig:   get,
-		ApplyConfig: apply,
-		logger:      log.New(log.Writer(), "[admin] ", log.LstdFlags),
-		sess:        newSessions(24 * time.Hour),
-		attempts:    map[string]*rateEntry{},
+		ConfigPath:   cfgPath,
+		Reload:       reload,
+		GetConfig:    get,
+		ApplyConfig:  apply,
+		logger:       log.New(log.Writer(), "[admin] ", log.LstdFlags),
+		sess:         newSessions(24 * time.Hour),
+		attempts:     map[string]*rateEntry{},
+		deployTok:    map[string]time.Time{},
+		deployTokTTL: 15 * time.Minute,
 	}
 	s.tmpl = mustParseTemplates()
 	return s
@@ -171,6 +181,12 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/system/update", s.requireAuth(s.handleUpdate))
 	mux.HandleFunc("/api/system/apply", s.requireAuth(s.handleApplyStaged))
 	mux.HandleFunc("/api/system/restart", s.requireAuth(s.handleRestart))
+
+	// deploy assistant
+	mux.HandleFunc("/deploy", s.requireAuth(s.handleDeployPage))
+	mux.HandleFunc("/api/deploy/status", s.requireAuth(s.handleDeployStatus))
+	mux.HandleFunc("/api/deploy/token", s.requireAuth(s.handleDeployToken))
+	mux.HandleFunc("/api/deploy/", s.handleDeployAsset) // session OR deploy token
 	mux.HandleFunc("/static/", s.handleStatic)
 	return mux
 }

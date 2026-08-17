@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>部署助手 - DeepSeek Tunnel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
+    <div class="nav-links"><a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files">文件</a>
+      <a href="/deploy" class="active">部署</a><a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
+  </nav>
+  <main class="container">
+    <div class="page-head">
+      <h2>部署助手</h2>
+      <span class="muted" id="statusLine">加载中…</span>
+    </div>
+    <p class="muted">
+      为没有图形界面的 <code>client</code>/<code>natclient</code> 主机生成<b>一条可直接复制执行的安装命令</b>：
+      该命令会从本服务器下载对应二进制与配置、写入 <code>/usr/local/bin</code> 与
+      <code>/etc/deepseek</code>、生成并启用、启动 systemd 单元。命令内置 15 分钟的部署令牌。
+    </p>
+    <div id="err" class="alert alert-error hidden"></div>
+
+    <div class="panel">
+      <h3>入口客户端 (client)</h3>
+      <label class="check-row" style="padding-top:0">
+        <select id="trustClient" style="width:auto; margin:0">
+          <option value="insecure">暂用 insecure_skip_verify（测试/内网）</option>
+          <option value="manual">不修改信任（我将手动配置 ca_file/指纹）</option>
+        </select>
+      </label>
+      <div class="actions"><button class="btn btn-primary" onclick="gen('client')">生成安装命令</button></div>
+      <pre class="code" id="cmdClient"></pre>
+    </div>
+
+    <div class="panel">
+      <h3>NAT 客户端 (natclient)</h3>
+      <label class="check-row" style="padding-top:0">
+        <select id="natId" style="width:auto; margin:0"></select>
+        <select id="trustNat" style="width:auto; margin:0">
+          <option value="insecure">暂用 insecure_skip_verify（测试/内网）</option>
+          <option value="manual">不修改信任（我将手动配置 ca_file/指纹）</option>
+        </select>
+      </label>
+      <div class="actions"><button class="btn btn-primary" onclick="gen('natclient')">生成安装命令</button></div>
+      <pre class="code" id="cmdNat"></pre>
+    </div>
+
+    <div class="panel">
+      <h3>复制下载地址（不含命令）</h3>
+      <p class="muted" id="boxInfo"></p>
+    </div>
+  </main>
+<script src="/static/dialog.js"></script>
+<script>
+(function(){
+  let state = null;
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  function loadStatus(){
+    fetch('/api/deploy/status').then(r=>r.json()).then(d=>{
+      document.getElementById('statusLine').textContent = d.enabled
+        ? '二进制目录：' + (d.deploy_dir||'') + '   服务器地址：' + (d.server||'')
+        : '未启用：请在配置页设置 deploy_dir，或为我放置 deepseek-client/natclient 二进制到服务器同一目录';
+      if (!d.enabled){ document.getElementById('statusLine').classList.add('badge','badge-warn'); return; }
+      const natSel = document.getElementById('natId');
+      natSel.innerHTML = '';
+      (d.nat_ids||[]).forEach(id=>{ const o=document.createElement('option'); o.value=id; o.textContent=id; natSel.appendChild(o); });
+      if (!(d.nat_ids||[]).length){ natSel.innerHTML='<option value="">（尚无 NAT 客户端）</option>'; }
+      const missing = Object.keys(d.binaries||{}).filter(k=>!d.binaries[k]);
+      if (missing.length) document.getElementById('statusLine').textContent += '   注意缺失:'+missing.join(',');
+      state = d;
+    }).catch(()=>{});
+  }
+
+  function token(){ return fetch('/api/deploy/token').then(r=>r.json()).then(d=>d.token); }
+
+  function build(role){
+    const base = 'https://' + (location.host);
+    const trust = (role==='client'? $('trustClient').value : $('trustNat').value);
+    const binName = 'deepseek-' + role;
+    const binURL = base + '/api/deploy/' + binName;
+    let cfgURL, cfgPath, cfgName;
+    if (role === 'client') { cfgName='client.json'; cfgPath='/etc/deepseek/client.json'; cfgURL=base+'/api/deploy/cfg/client.json'; }
+    else { const id=$('natId').value || ''; cfgName='natclient-'+id+'.json'; cfgPath='/etc/deepseek/'+cfgName; cfgURL=base+'/api/deploy/cfg/natclient/'+id+'.json'; }
+    const mkdir = role==='client' ? 'mkdir -p /usr/local/bin /etc/deepseek' : 'mkdir -p /usr/local/bin /etc/deepseek';
+    const sedLine = trust==='insecure'
+      ? "sed -i 's/\"insecure_skip_verify\": false/\"insecure_skip_verify\": true/' " + cfgPath
+      : "# 不修改信任; 你可自行编辑 " + cfgPath + " 设置 ca_file 或 server_fingerprint";
+    return `#!/usr/bin/env bash
+set -euo pipefail
+# DeepSeek 部署助手生成 · 请在目标主机以 root 执行
+${mkdir}
+# 1) 下载二进制
+curl -fkS -H "Authorization: Bearer TOK" -o /usr/local/bin/${binName} "${binURL}"
+chmod +x /usr/local/bin/${binName}
+# 2) 下载配置
+curl -fkS -H "Authorization: Bearer TOK" -o ${cfgPath} "${cfgURL}"
+${sedLine}
+# 3) 生成并启用、启动 systemd 单元（enable 与 start 分开）
+/usr/local/bin/${binName} -config ${cfgPath} service install
+/usr/local/bin/${binName} -config ${cfgPath} service start
+`;
+  }
+
+  window.gen = function(role){
+    const cmd = build(role);
+    const preId = role==='client'?'cmdClient':'cmdNat';
+    // replace placeholder TOK with a fresh token
+    token().then(tk=>{
+      document.getElementById(preId).textContent = cmd.replace(/\bTOK\b/, tk).trimEnd();
+    }).catch(e=>{ document.getElementById(preId).textContent='获取令牌失败: '+e; });
+  };
+  document.querySelectorAll('pre').forEach(p=>{ p.style.cursor='pointer'; p.title='点击复制'; p.addEventListener('click',function(){ if(!this.textContent.trim())return; navigator.clipboard && navigator.clipboard.writeText(this.textContent); }); });
+
+  loadStatus();
+})();
+</script>
+<style>
+.code { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; white-space: pre; overflow: auto; margin: 10px 0 4px; color: #cfe3ff; }
+</style>
+</body>
+</html>

@@ -30,6 +30,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -335,6 +336,7 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 		func() error { return nil },
 	)
 	adm.Hooks = buildAdminHooks(cfgPath)
+	adm.DeployDir = resolveDeployDir(sc)
 
 	// Certificates: ACME files if present, else ephemeral in-memory self-signed.
 	cm := newCertManager(rt.scCertFile(), rt.scKeyFile())
@@ -526,4 +528,31 @@ func setupLogging(sc *config.ServerConfig, cfgPath string) {
 	}
 	log.SetOutput(w)
 	log.Printf("log file: %s (rotation %.0f MiB, %d backups)", logPath, float64(maxBytes)/1024/1024, maxFiles)
+}
+
+// resolveDeployDir determines where compiled binaries live for the 部署助手.
+// Priority: config.deploy_dir > $DEEPSEEK_DEPLOY_DIR > sibling of the running
+// server binary. Empty means the deploy assistant is disabled.
+func resolveDeployDir(sc *config.ServerConfig) string {
+	if sc != nil && sc.DeployDir != "" {
+		return sc.DeployDir
+	}
+	if e := os.Getenv("DEEPSEEK_DEPLOY_DIR"); e != "" {
+		return e
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	d := filepath.Dir(exe)
+	// only auto-enable if it actually contains at least one companion binary
+	if serviceBinaryThere(d, "deepseek-client") {
+		return d
+	}
+	return ""
+}
+
+func serviceBinaryThere(dir, name string) bool {
+	_, err := os.Stat(filepath.Join(dir, name))
+	return err == nil
 }

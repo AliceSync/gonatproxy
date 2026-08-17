@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"deepseekaiworker/internal/config"
 )
@@ -280,5 +281,42 @@ func TestServiceEndpoints(t *testing.T) {
 	s.handleServiceControl(rec, httptest.NewRequest("POST", "/api/service/control?action=delete", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid action code=%d", rec.Code)
+	}
+}
+
+func TestDeployConfigBuilders(t *testing.T) {
+	s, _ := newTestServer()
+	cur := s.GetConfig()
+	cur.PublicAddr = "10.0.0.5:9443"
+	cur.Clients["nat1"] = &config.NatClient{Secret: "sec", Services: []config.Service{{Name: "web", Port: 8080}}}
+
+	cb, err := s.buildClientConfig()
+	if err != nil || !strings.Contains(string(cb), "10.0.0.5:9443") {
+		t.Fatalf("client cfg err=%v body=%s", err, cb)
+	}
+	nb, err := s.buildNATConfig("nat1")
+	if err != nil || !strings.Contains(string(nb), "\"client_id\": \"nat1\"") || !strings.Contains(string(nb), "\"secret\": \"sec\"") {
+		t.Fatalf("nat cfg err=%v body=%s", err, nb)
+	}
+	if _, err := s.buildNATConfig("nonexistent"); err == nil {
+		t.Fatal("expected error for unknown nat id")
+	}
+}
+
+func TestDeployTokenLifecycle(t *testing.T) {
+	s, _ := newTestServer()
+	tok := s.makeDeployToken()
+	if !s.deployTokenValid(tok) {
+		t.Fatal("fresh token should validate")
+	}
+	if s.deployTokenValid("nope") {
+		t.Fatal("bogus token should not validate")
+	}
+	// expire it
+	s.deployMu.Lock()
+	s.deployTok[tok] = time.Now().Add(-time.Minute)
+	s.deployMu.Unlock()
+	if s.deployTokenValid(tok) {
+		t.Fatal("expired token should not validate")
 	}
 }

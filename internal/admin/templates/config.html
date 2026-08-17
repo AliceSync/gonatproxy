@@ -9,7 +9,7 @@
 <body>
   <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
     <div class="nav-links"><a href="/dashboard">概览</a><a href="/config" class="active">配置</a><a href="/files">文件</a>
-      <a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
+      <a href="/deploy">部署</a><a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
   </nav>
   <main class="container">
     <div class="page-head">
@@ -51,6 +51,9 @@
         </label>
         <label>日志备份数量（0=默认 5）
           <input data-f="log_max_files" type="number" min="0" max="50" value="">
+        </label>
+        <label>二进制目录（部署助手用，留空=自动探测）
+          <div class="field-row"><input data-f="deploy_dir" type="text" value=""><button type="button" class="btn btn-ghost btn-sm" onclick="pickFile('deploy_dir')">选择</button></div>
         </label>
       </div>
     </section>

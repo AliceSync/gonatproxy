@@ -14,6 +14,8 @@
       'log_max_bytes': cfg.log_max_bytes || '',
       'log_max_files': cfg.log_max_files || ''
     };
+    // additional plain string fields without number parsing
+    const mapStr = { 'deploy_dir': (cfg.deploy_dir)||'' };
     document.querySelectorAll('input[data-f]').forEach(inp => {
       const f = inp.dataset.f;
       if (f === 'admin.listen') inp.value = cfg.admin ? (cfg.admin.listen || '') : '';
@@ -22,6 +24,7 @@
       else if (f === 'admin.key_file') inp.value = cfg.admin ? (cfg.admin.key_file || '') : '';
       else if (f === 'admin.username') inp.value = cfg.admin ? (cfg.admin.username || '') : '';
       else if (f === 'admin.newpassword') inp.value = '';
+      else if (f === 'deploy_dir') inp.value = mapStr[f];
       else inp.value = map[f] !== undefined ? map[f] : '';
     });
   }
@@ -47,6 +50,9 @@
     if (m.log_file === '') delete cfg.log_file;
     if (cfg.log_max_bytes <= 0) delete cfg.log_max_bytes;
     if (cfg.log_max_files <= 0) delete cfg.log_max_files;
+    // deploy_dir is a plain string
+    const dd = document.querySelector('input[data-f="deploy_dir"]');
+    if (dd && dd.value) cfg.deploy_dir = dd.value; else delete cfg.deploy_dir;
   }
 
   function row(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }

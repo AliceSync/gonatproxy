@@ -1,86 +1,82 @@
-# DeepSeek AI Tunnel (Go)
+# DeepSeek AI Tunnel（Go 版）
 
-A Go TLS tunnel for AI backends and NAT traversal. It has **three** components:
+一个用 Go 编写的 TLS 隧道程序，用于把「AI 工具 → 本地入口」的数据安全地转发到
+DeepSeek 后端、以及穿透 NAT 暴露内网服务。它包含**三个可执行程序**，只支持 Linux：
 
-- **server** (`cmd/server`) — the control plane and relay hub. It decides
-  *everything*: which local ports the client listens on, where each port
-  forwards to (a server-side TCP target **or** a NAT client's service), and
-  who may register as a NAT client. Certificates are auto-reloaded (ACME).
-- **client** (`cmd/client`, the "entry" endpoint) — runs alongside AI tooling.
-  It only knows the server address, dials out over TLS, gets its port list from
-  the server, and blindly tunnels inbound local connections.
-- **natclient** (`cmd/natclient`) — runs on a host behind NAT. It dials out to
-  the server, registers its identity + the local services it exposes, and
-  serves inbound streams from the server. Multiple services on multiple ports
-  are supported.
+- **server**（`cmd/server`，控制面 + 中继枢纽）：它决定一切——入口客户端要绑定哪些
+  本地端口、每个端口转发到哪里（服务器本地的 TCP 目标，**或**某个 NAT 客户端的
+  服务）、以及允许哪些 NAT 客户端注册。证书支持自动加载（ACM 场景）。
+- **client**（`cmd/client`，入口端点）：运行在 AI 工具所在的机器上。它只知道服务器
+  地址，向外拨号走 TLS，从服务器拿到端口列表，然后在本地监听这些端口，把每一个本地
+  入站连接原样隧穿给服务器。
+- **natclient**（`cmd/natclient`）：运行在 NAT 后面的主机上。它向外拨号到服务器
+  （因此能穿越 NAT），注册自己的身份和暴露的本地服务，并服务服务器转发过来的入站流。
+  支持在多个端口暴露多个服务。
+
+下图是三种程序的分工关系：
 
 ```
-AI tool --(5051)--> client ═TLS═> server ──> deepseek backend (127.0.0.1:8000)
-AI tool --(5052)--> client ═TLS═> server ──> lmstudio       (127.0.0.1:1234)
-HTTP    --(8080)--> client ═TLS═> server ──> NAT client "nat-home" ═> local http service
-HTTPS   --(8081)--> client ═TLS═> server ──> NAT client "nat-home" ═> local tcp service
+AI 工具 --(5051)--> client ══TLS═▶ server ──▶ DeepSeek 后端 (127.0.0.1:8000)
+AI 工具 --(5052)--> client ══TLS═▶ server ──▶ lmstudio       (127.0.0.1:1234)
+浏览器 --(8080)--> client ══TLS═▶ server ──▶ NAT 客户端 "nat-home" ═▶ 本地 http 服务
+HTTPS  --(8081)--> client ══TLS═▶ server ──▶ NAT 客户端 "nat-home" ═▶ 本地 tcp 服务
 ```
 
-Both `client` and `natclient` dial **out** to the server, so no inbound firewall
-rules are needed on their side — this is what makes NAT traversal possible. The
-server is the only publicly reachable endpoint. Supported OS: **Linux**.
+`client` 和 `natclient` 都是**向外拨号**到服务器，因此它们那边不需要任何入站防火墙
+规则——这正是能做 NAT 穿透的原因。服务器才是唯一对外开放的端点。
 
-## Roles in one picture
+## 三种程序一句话理解
 
-| component | connects | trusts | decides |
-|-----------|----------|--------|---------|
-| server    | listens (TLS) | — | all routing, ports, NAT ids |
-| client    | dials server | server cert | nothing (only server addr) |
-| natclient | dials server | server cert | its own local services (its config) |
+| 程序 | 连接方向 | 信任 | 决定 |
+|------|---------|------|------|
+| server | 监听（TLS） | — | 全部路由、端口、NAT 身份 |
+| client | 拨号到 server | server 证书 | 无（只知道 server 地址） |
+| natclient | 拨号到 server | server 证书 | 自己要暴露的本地服务（自己的配置） |
 
-## Directory layout
+## 目录结构
 
 ```
 deepseekaiworker/
 ├── cmd/
-│   ├── server/main.go         # TLS hub: entry/nat roles, routing, ACME reload
-│   ├── server/certmanager.go  # auto-reloads cert/key when files change (ACME)
-│   ├── client/main.go         # entry tunnel endpoint (dynamic local ports)
-│   └── natclient/main.go      # exposes local NAT services via the server
+│   ├── server/main.go        # TLS 枢纽：入口/NAT 角色、路由、证书热加载
+│   ├── server/certmanager.go # 证书文件变化时自动重载（ACME）
+│   ├── client/main.go        # 入口隧道端点（动态本地端口）
+│   └── natclient/main.go     # 通过 server 暴露本地 NAT 服务
 ├── internal/
-│   ├── mux/                   # length-framed multiplexed stream protocol
-│   ├── tlscfg/                # shared client TLS trust (CA/fingerprint/skip)
-│   └── ...
-├── configs/                   # server.json, client.json, natclient.json
-├── systemd/                   # deepseek-server/.service, deepseek-client@, deepseek-natclient@
-├── scripts/                   # build.sh, gen_certs.sh, install.sh
+│   ├── mux/                  # 长度分帧的多路复用流协议
+│   ├── tlscfg/               # 客户端连接的 TLS 信任（CA/指纹/跳过校验）
+│   ├── config/               # server 配置的读取/保存/校验
+│   └── admin/                # 内嵌 Web 控制台（登录、配置、文件、服务、系统）
+├── configs/                  # server.json, client.json, natclient.json 示例
+├── systemd/                  # server/client/natclient 的 systemd 单元文件
+├── scripts/                  # build.sh, gen_certs.sh, install.sh
 ├── go.mod
 └── README.md
 ```
 
-## TLS trust (client & natclient)
+## 客户端 TLS 信任（client & natclient）
 
-The client verifies the server's certificate. Pick one mode via config:
+客户端要校验服务器证书，三种模式在配置里选一个即可：
 
-| field                    | meaning |
-|--------------------------|---------|
-| `ca_file` *(default)*    | verify against a trusted CA. **Recommended.** |
-| `server_fingerprint`     | verify the server's leaf cert equals this hex(sha256). Use when CA rotates (e.g. together with ACME) and you cannot pin the CA. |
-| `insecure_skip_verify`   | disable verification (only for initial bring-up / lab). |
+| 字段 | 含义 |
+|------|------|
+| `ca_file` *(默认)* | 用受信任的 CA 校验。**推荐。** |
+| `server_fingerprint` | 把服务器的叶子证书与这个 hex(sha256) 比对。CA 轮换（如 ACME）无法固定 CA 时可用。 |
+| `insecure_skip_verify` | 完全跳过校验（仅用于首次搭建/内网实验）。 |
 
-If none is set, startup fails with *"nothing to trust"*. Precedence:
-`server_fingerprint` > `insecure_skip_verify` > `ca_file`.
+三者都不设则启动报错 *"nothing to trust"*。优先级：`server_fingerprint` >
+`insecure_skip_verify` > `ca_file`。
 
-> Note on ACME + fingerprint: if your CA rotates certs frequently, the
-> fingerprint must be updated to match. Using `ca_file` *(default)* avoids that
-> — point it at your ACME CA and let verification stay stable across renewals.
+## server 配置（`configs/server.json`）
 
-## Server config (`configs/server.json`)
-
-- `cert_file` / `key_file` — ACME-managed paths are fine; the server **polls
-  every `cert_check_seconds` and reloads automatically** when files change.
-  A failed reload keeps the previous cert and retries later.
-- `clients` — map of `nat client id → secret`. Only NAT clients with a
-  matching secret may register.
-- `routes` — each route has a `listen_port` (the local port the entry client
-  binds) and **exactly one** of:
-  - `target` — a server-side `host:port` to dial, or
-  - `nat_client` + `service` — a NAT client's registered service name.
+- `cert_file` / `key_file` —— 可以是 ACME 管理的路径；服务器每 `cert_check_seconds`
+  秒轮询一次，文件变化**自动重载**。重载失败会保留旧证书并稍后重试。
+- `clients` —— `NAT 客户端 id → secret` 的映射。只有 secret 匹配的 NAT 客户端才能注册。
+- `routes` —— 每条路由有一个 `listen_port`（入口 client 本地要绑定的端口）和恰好一个目标：
+  - `target` —— 服务器本地的 `host:port` 目标；或
+  - `nat_client` + `service` —— 某个 NAT 客户端注册的服务名。
+- **`routes` 可以为空**：此时服务器只运行 Web 控制台（中继关闭），方便你先初始化账号、
+  之后再补路由，不会启动报错。
 
 ```json
 "routes": [
@@ -89,12 +85,11 @@ If none is set, startup fails with *"nothing to trust"*. Precedence:
 ]
 ```
 
-## NAT client config (`configs/natclient.json`)
+## NAT 客户端配置（`configs/natclient.json`）
 
-- `client_id` + `secret` must match an entry in the server's `clients` map.
-- `services` — the local services to expose; each has `name`, a local `port`,
-  and optional `addr` (defaults to `127.0.0.1:<port>`). Add as many as you
-  need — each is reachable through its own route.
+- `client_id` + `secret` 必须与 server 的 `clients` 映射里的一项一致。
+- `services` —— 要暴露的本地服务，每个有 `name`、本地 `port`，`addr` 可选（默认
+  `127.0.0.1:<port>`）。可加多个，每个通过自己的路由可达。
 
 ```json
 "services": [
@@ -103,177 +98,178 @@ If none is set, startup fails with *"nothing to trust"*. Precedence:
 ]
 ```
 
-Changing a NAT client's config only on the NAT side is enough: on reconnect it
-re-registers with the server, which updates its view.
+修改 NAT 客户端的配置只需改 NAT 那侧：重连后它会重新注册，服务器更新视图。
 
-## Build
+## 构建
 
 ```bash
 ./scripts/build.sh
-# produces bin/deepseek-server, bin/deepseek-client, bin/deepseek-natclient
+# 生成 bin/deepseek-server, bin/deepseek-client, bin/deepseek-natclient
 ```
 
-## Server CLI
+## server 命令行
 
 ```text
-deepseek-server                  run in the foreground
-deepseek-server run              run in the foreground (explicit)
-deepseek-server start            run in the background (daemonized)
-deepseek-server version          print version and exit
-Flags: -config <path>   (default config.json; works before or after the subcommand)
+deepseek-server                  # 前台运行
+deepseek-server run              # 前台运行（显式）
+deepseek-server start            # 后台守护运行（daemonized）
+deepseek-server service <子命令>  # 管理 systemd 服务单元
+deepseek-server version          # 打印版本
+Flags: -config <path>   (默认为 config.json；可在子命令前后)
 ```
 
-- **foreground** is the default; `start` re-launches itself detached in the
-  background (logs to `log_file` or `<config dir>/server.log`) and returns.
-- **No config file**: the server starts in **initialization mode** — it runs
-  only the web console (over **HTTPS** with an in-memory self-signed cert) so
-  you can create an account, edit and generate a config, then start normally.
+- **前台是默认**；`start` 会用 `Setsid` 把自己重新拉起到后台（各角色日志写入 `log_file`
+  或 `<配置目录>/server.log`）并返回。
+- **没有配置文件**：服务器进入**初始化模式**，只跑 Web 控制台，方便你建号、生成配置后再正常启动。
 
-## Logging (optional, size-capped)
+## 日志（可选，且带大小上限）
 
-- **No `log_file` configured?** Completely optional:
-  - running foreground (or under systemd) → logs go to the process's
-    stdout/stderr, i.e. the **systemd journal** under systemd;
-  - running daemonized via `start` → an implicit `<config dir>/server.log`
-    is used so the background process still has a place to log.
-- **`log_max_bytes`** (default 100 MiB) caps how large the log grows; once
-  exceeded it **rotates** to `server.log.1 → .2 → …`, keeping
-  **`log_max_files`** (default 5) backups. Set `log_max_bytes: 0` to disable
-  rotation. Both are editable in the 配置 page.
+- **`log_file` 可以不配置**：
+  - 前台或 systemd 下运行 → 日志直接进进程的 stdout/stderr，即 systemd 的 **journal**；
+  - 仅用 `start` 后台守护时 → 隐式使用 `<配置目录>/server.log`，保证后台进程仍有去处。
+- **`log_max_bytes`**（默认 100 MiB）限制日志大小，超过后**轮转**成 `server.log.1
+  → .2 → …`，保留 **`log_max_files`**（默认 5）份备份。设为 `0` 可关闭轮转。
+  这些都能在配置页编辑。
 
-## Web console
+## Web 控制台
 
-The server embeds a management console (login = **account + password**):
+服务器内嵌一个管理控制台（登录 = **账号 + 密码**）：
 
-- First run with no admin account → **initialization mode** on
-  `https://localhost:8443` that walks you through creating the admin account.
-- Default console address is the relay port **`:8443`**, **shared** on the same
-  TLS port: the server demuxes HTTP(console) vs tunnel(relay) per connection,
-  so your browser and the AI clients use the same 8443/TLS.
-- You can also give the console an **independent** port via `admin.listen`
-  (e.g. `":8445"`); leave it empty to share `:8443`.
-- If `:8443` is busy at startup in init mode, the server picks an ephemeral
-  free port and tells you.
-- With no cert files configured, an **ephemeral self-signed certificate** is
-  generated in memory (console is still HTTPS); set `cert_file`/`key_file`
-  (ACME) for persistent certs.
-- After login you can:
-  - edit every configurable item (relay listen, cert paths, cert-check interval,
-    dial timeout, routes, NAT clients + secrets/services, admin listen/TLS);
-  - **export** ready-to-use `client.json` and `natclient.json` configs;
-  - save → config is persisted + hot-reloaded (no restart). The console
-    manages NAT client secrets/services for clean export.
-- Failed login attempts are rate-limited per IP.
+- 首次运行没有管理员账号 → **初始化模式**，在 Web 上引导创建管理员账号。
+- 默认控制台地址是中继端口 **`:8443`**，**同端口共享**：服务器按连接区分 HTTP（控制台）
+  与隧道（中继），所以浏览器和 AI 客户端共用同一个 8443/TLS。
+- 也可通过 `admin.listen` 给控制台独立端口（如 `":8445"`）；留空则共享 `:8443`。
+- 若 `:8443` 启动时被占用，初始化模式会退到一个可用临时端口并提示你。
+- 没有配置证书时在内存里生成**临时自签名证书**（控制台仍是 HTTPS）；配置
+  `cert_file`/`key_file` 用持久证书。
+- 登录后可：
+  - 编辑所有可配置项（中继监听、证书路径、证书检查间隔、拨号超时、路由、NAT 客户端
+    + secret/服务、控制台监听/TLS）；
+  - **导出**现成的 `client.json` 和 `natclient.json`；
+  - 保存 → 配置持久化并**热重载无需重启**。
+- 登录失败按 IP 限速。
 
-### Management pages
+### 页面
 
-- **文件 (Files)** — a full file manager: browse, jump to a path, create/delete
-  files & dirs, upload, download, and edit text files in-browser. Restricted by
-  `FileRoot` when set (unset = whole filesystem).
-- **配置 (Config)** — every path field (`cert_file`, `key_file`, `log_file`,
-  and the admin console TLS cert/key) has a **选择** button that opens the file
-  manager in *select mode*: pick a server-side file and it is filled into the
-  field. This is how you choose certificate files instead of typing a path.
-- **服务 (Services)** — systemd unit management:
-  - **生成 / 更新 unit 文件** writes `deepseek-server.service` from the *current*
-    executable and config paths (so the service reads the **same config** the
-    console manages) and runs `daemon-reload`.
-  - **enable（自启）** and **start（立即）** are separated — enable does NOT start.
-  - **平滑交接**: if the server was launched via `start` (daemonized) or in the
-    foreground and is *not* yet a systemd service, clicking **start** first closes
-    the listeners gracefully (freeing the port), lets systemd take over, then the
-    old process exits cleanly. So systemd owns the port and the correct config.
-- **系统 (System)** — binary updates + restart:
-  - Upload a new `deepseek-server`; choose whether to **apply immediately** (mv +
-    fork start) or just stage it. On the system page you can then **apply and
-    restart** the staged update, or **restart now**.
-  - Restart is either delegated to `systemctl restart` (systemd) or a graceful
-    fork (non-systemd), so the service mode keeps working correctly.
+- **概览**：运行模式（前台 / start 守护 / systemd 管理）、监听、路由、NAT 客户端汇总。
+- **配置**：所有路径字段（`cert_file`、`key_file`、`log_file`、控制台证书/私钥）都有
+  **选择**按钮，会打开文件管理器选择模式，选中的服务器端文件会回填到字段里——
+  证书等再也不用手打路径。另可填日志轮转上限/份数；删除路由/客户端/服务有确认对话框。
+- **文件**：文件管理器——浏览、跳转目录、新建/删除文件与目录、上传、下载、在线编辑文本。
+- **服务**：systemd 单元管理：
+  - **生成/更新 unit 文件**：按服务器**当前可执行文件与配置路径**生成
+    `deepseek-server.service` 并 `daemon-reload`，保证服务读取的配置与控制台完全一致；
+  - **enable（自启）与 start（立即）分开**——enable 不启动；
+  - **平滑交接**：若当前进程不是 systemd 管理（前台或 `start` 守护），点 **start** 时
+    先平滑关闭监听、释放端口，让 systemd 接管启动，随后旧进程干净退出。
+  - 进程模式判定严格按真实状态：仅当 unit 已安装、活跃且其 `MainPID`==当前 pid 才显示
+    "systemd 管理"，`go run` 启动会正确显示为"前台进程"。
+- **系统**：更新程序 + 重启。上传新的 `deepseek-server`，选择是否上传后立即替换重启
+  （mv 替换 + fork 启动），或先暂存稍后应用；另有单独的重启按钮。所有操作有明确的确认对话框。
+- 所有对话框（确认/输入/提示）都是自定义美观样式，不再用原生 `alert/confirm/prompt`。
 
-### systemd as a `service` CLI
-
-Beyond the web console, the same unit generation is available as a command:
+## 作为 systemd `service` 命令
 
 ```bash
-deepseek-server service install   # generate unit + enable (separate from start)
-deepseek-server service start     # start now (graceful handoff)
+deepseek-server service install     # 生成 unit + enable（与 start 分开）
+deepseek-server service enable      # 仅设置开机自启（不启动）
+deepseek-server service start       # 立即启动（带平滑交接）
+deepseek-server service stop|restart
 deepseek-server service status
-deepseek-server service show      # print the unit that would be installed
+deepseek-server service show        # 打印要安装的 unit 内容（不写入）
 ```
 
-> **进程模式判定**：页面上"前台进程 / start 守护进程 / systemd 管理"按真实
-> 状态判定——"systemd 管理"仅当 `deepseek-server.service` 已安装、活跃且
-> 其 `MainPID` 等于当前进程 pid 时为真（不再仅凭环境变量 `INVOCATION_ID`
-> 猜测），所以即使用 `go run` 启动也正确显示为"前台进程"。
+### client / natclient 同样支持 systemd（无图形界面，全部命令行）
 
-## Install as systemd services
-
-`scripts/install.sh` installs binaries, a (per-role) unit, and config. The
-server unit starts `deepseek-server run` in the foreground under systemd.
+`client` 和 `natclient` 这两个程序没有 Web 控制台，因此直接内置 `service` 子命令
+来生成并托管各自的 systemd 单元，用法与 server 一致（enable 与 start 分开）：
 
 ```bash
-sudo ./scripts/install.sh server                    # server host + web console
-sudo ./scripts/install.sh client                    # entry host
-sudo ./scripts/install.sh natclient my-nat-id       # NAT host
+# 入口客户端
+sudo deepseek-client    -config /etc/deepseek/client.json    service install   # 生成 unit + enable
+sudo deepseek-client    -config /etc/deepseek/client.json    service start     # 启动
+# NAT 客户端
+sudo deepseek-natclient -config /etc/deepseek/natclient-<id>.json service install
+sudo deepseek-natclient -config /etc/deepseek/natclient-<id>.json service start
+# 通用：service enable|start|stop|restart|status|show
 ```
 
+- 单元按**当前可执行文件与 `-config` 配置路径**生成：`/etc/systemd/system/deepseek-client.service`、
+  `/etc/systemd/system/deepseek-natclient.service`（`User`/`Group`=当前用户，可用环境变量
+  `DEEPSEEK_SERVICE_USER` 覆盖，测试可用 `DEEPSEEK_SYSTEMD_DIR` 指定单元目录）。
+- 两个程序的**配置本就极简**（client 只需 server 地址 + 信任方式；natclient 只需
+  server + id/secret/services），并且由 **server 控制台直接导出**（「配置」页的
+  「导出 client / 导出 natclient 配置」）自动生成，不需手写 secret/服务。
 
-## Test run
+> 进程模式提示：client / natclient 的前台实例没有 server 那样的自动交接。执行
+> `service start` 前请先停止正在前台运行的旧实例（Ctrl-C），否则本地端口可能冲突。
+
+### 部署助手（server 控制台「部署」页）
+
+想真正"一条命令装好"？在 server 控制台 **「部署」页**，对**入口客户端**和**每个 NAT
+客户端**各生成**一段可直接复制、以 root 在目标主机执行的安装命令**，它会自动：
+
+1. 从 server 下载对应二进制（`/api/deploy/deepseek-client|natclient`）与现成配置
+   （`/api/deploy/cfg/client.json`、`/api/deploy/cfg/natclient/<id>.json`，secret/服务
+   直接从服务器配置生成）；
+2. 写入 `/usr/local/bin/<二进制>` 和 `/etc/deepseek/<配置>`；
+3. 运行 `deepseek-<role> service install` + `service start`，启用并启动 systemd 单元。
+
+命令内置一个 **15 分钟有效期**的部署令牌（`Authorization: Bearer <token>`），以便目标
+主机无需浏览器登录即可拉取文件；也可在页面上选择「暂用 insecure_skip_verify」批量改配置。
+二进制目录由配置 `deploy_dir` 指定（默认取 server 可执行文件同目录；留空自动探测）。
+
+> 部署助手依赖 `deploy_dir` 指向已经 `scripts/build.sh` 编译好的 deepseek-server/
+> client/natclient 三个二进制。
+
+## 安装为 systemd 服务
+
+`scripts/install.sh` 安装二进制、单元文件、配置：
 
 ```bash
-# 1. certs (on the server host)
-./scripts/gen_certs.sh <SERVER_IP_OR_HOST>...
-# 2. edit configs, then:
+sudo ./scripts/install.sh server          # 服务器主机 + Web 控制台
+sudo ./scripts/install.sh client          # 入口主机（绑定本地端口）
+sudo ./scripts/install.sh natclient 我的id # NAT 主机：deepseek-natclient@我的id
+```
+
+server 单元以 `deepseek-server run` 前台方式在 systemd 下运行，日志进 journal。
+
+## 运行测试（手动）
+
+```bash
+# 1. 在 server 主机生成证书
+./scripts/gen_certs.sh <IP_或_域名>...
+# 2. 编辑配置，然后分别启动
 ./bin/deepseek-server    -config configs/server.json
-./bin/deepseek-natclient -config configs/natclient.json   # NAT host
-./bin/deepseek-client    -config configs/client.json      # entry host
-# connect:
-curl http://127.0.0.1:5051/...    # -> deepseek target
-curl http://127.0.0.1:8080/...    # -> NAT client's local service
+./bin/deepseek-natclient -config configs/natclient.json   # NAT 主机
+./bin/deepseek-client    -config configs/client.json      # 入口主机
+# 3. 通过入口客户端本地端口访问目标：
+curl http://127.0.0.1:5051/...   # -> DeepSeek 后端
+curl http://127.0.0.1:8080/...   # -> NAT 客户端的本地服务
 ```
 
-## Install as systemd services
+> 已用 client + server + natclient 三者联调验证：入口本地端口 → NAT 路由 → 本地后端、
+> 以及直接目标路由，均能拿到真实响应数据。
 
-`scripts/install.sh` is provided:
+## 协议（简）
 
-```bash
-sudo ./scripts/install.sh server                    # server host
-sudo ./scripts/install.sh client                    # entry host (binds local ports)
-sudo ./scripts/install.sh natclient my-nat-id       # NAT host: deepseek-natclient@my-nat-id
-```
+每对组件之间一条持久 TLS 连接，用 4 字节连接 id 多路复用。
+帧格式：`[type 1B][conn id 4B][len 4B][payload N B]`
 
-Services:
-- `deepseek-server.service`
-- `deepseek-client@.service` (per-user template)
-- `deepseek-natclient@.service` (per-id template, reads `/etc/deepseek/natclient-<id>.json`)
+| type | 含义 |
+|------|------|
+| 0x01 OPEN     | client→server：open stream，payload=2 字节监听端口；server→natclient：payload=2 字节服务端口 |
+| 0x02 DATA     | 双向原始隧道字节 |
+| 0x03 CLOSE    | 半关闭：发送方不再有 DATA |
+| 0x04 CONFIG   | server→入口 client：JSON 端口列表 |
+| 0x05 REGISTER | client→server（首帧）：角色 + id/secret/services |
 
-All restart automatically; the client and natclient also reconnect on their
-own. If you need local entry ports **<1024**, run as root or add
-`CAP_NET_BIND_SERVICE`.
+握手：client 拨 TLS → 发 REGISTER → server 按角色分发（`entry` 收到 CONFIG；
+`nat` 注册并可收到其服务的 OPEN）。可靠性：自动重连退避、证书自动重载、互斥保护的
+帧、多连接中继 goroutine 结构（并发与竞态检测下无竞态）。
 
-## Protocol (short)
+## 性能/可靠性
 
-One persistent TLS connection per component pair, multiplexed by a 4-byte
-connection id. Frame: `[type 1B][conn id 4B][len 4B][payload N B]`.
-
-| type | meaning |
-|------|---------|
-| 0x01 OPEN     | client→server: open stream, payload = 2-byte listen port. server→natclient: open stream, payload = 2-byte service port |
-| 0x02 DATA     | either direction, raw tunnel bytes |
-| 0x03 CLOSE    | half-close: no more DATA from sender |
-| 0x04 CONFIG   | server→entry client: JSON ports list |
-| 0x05 REGISTER | client→server (first frame): role + id/secret/services |
-
-Handshake: client dials TLS → sends REGISTER → server routes by role
-(`entry` gets a CONFIG; `nat` is registered and receives OPENs for its
-services). Reliability features: auto-reconnect with backoff, certificate
-auto-reload, mutex-protected framing, and per-connection relay goroutines that
-survive transient load (verified race-free under load).
-
-## Performance / reliability notes
-
-- Raw byte relay with 32 KiB buffers; no protocol parsing on the hot path.
-- All frame writes per connection are serialized by one mutex; streams don't
-  block one another except by the shared socket write lock (standard for
-  multiplexed tunnels).
-- Verified under concurrent load and with the Go race detector (0 races).
+- 原始字节中继，32 KiB 缓冲，热路径不做协议解析。
+- 每个连接的所有帧写由一把互斥锁串行化；不同流互不阻塞（共享 socket 写锁为标准做法）。
+- 并发负载与 Go 竞态检测下验证无竞态。

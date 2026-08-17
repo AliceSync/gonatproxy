@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"deepseekaiworker/internal/mux"
+	"deepseekaiworker/internal/service"
 	"deepseekaiworker/internal/tlscfg"
 )
 
@@ -41,6 +42,11 @@ type ClientConfig struct {
 func main() {
 	cfgPath := flag.String("config", "config.json", "path to nat client config JSON")
 	flag.Parse()
+
+	// `deepseek-natclient service ...` manages the systemd unit (no config needed).
+	if args := flag.Args(); len(args) > 0 && args[0] == "service" {
+		os.Exit(service.RunCLI("natclient", *cfgPath, args[1:]))
+	}
 
 	cfgRaw, err := os.ReadFile(*cfgPath)
 	if err != nil {

@@ -321,6 +321,7 @@ func downloadJSON(w http.ResponseWriter, filename string, v any) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Write(append(buf, '\n'))
 }

@@ -320,6 +320,7 @@ func (s *Server) serveDeployBinary(w http.ResponseWriter, r *http.Request, name 
 	defer f.Close()
 	st, _ := f.Stat()
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filepath.Base(p)))
 	if st != nil {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", st.Size()))

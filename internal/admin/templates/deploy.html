@@ -67,7 +67,7 @@
 <script>
 (function(){
   let state = null;
-  const $ = s => document.querySelector(s);
+  const $ = s => document.querySelector('#' + s); // query by element id
   const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   function loadStatus(){
@@ -81,7 +81,7 @@
       const natSel = document.getElementById('natId');
       natSel.innerHTML = '';
       (d.nat_ids||[]).forEach(id=>{ const o=document.createElement('option'); o.value=id; o.textContent=id; natSel.appendChild(o); });
-      if (!(d.nat_ids||[]).length){ natSel.innerHTML='<option value="">（尚无 NAT 客户端）</option>'; }
+      if (!(d.nat_ids||[]).length){ natSel.innerHTML='<option value="">（尚无 NAT 客户端，请在「配置」页添加后刷新本页）</option>'; }
       const missing = Object.keys(d.binaries||{}).filter(k=>!(d.binaries[k]&&d.binaries[k].length));
       if (missing.length) document.getElementById('statusLine').textContent += '   注意缺失:'+missing.join(',');
       state = d;

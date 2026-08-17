@@ -256,6 +256,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Never cache authenticated pages: after logout/restart a stale cached copy
+	// must never reappear looking like you're still logged in.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Printf("render %s: %v", name, err)
 	}
@@ -292,6 +295,7 @@ func mustParseTemplates() *template.Template {
 // ---- JSON helpers ----
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
 	enc := json.NewEncoder(w)
 	enc.Encode(v)

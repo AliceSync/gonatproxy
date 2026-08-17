@@ -288,7 +288,7 @@ func (s *Server) handleExportClient(w http.ResponseWriter, r *http.Request) {
 		"insecure_skip_verify":    false,
 		"server_name":             "",
 		"reconnect_delay_seconds": 5,
-		"_comment":                "Set server to your public server host:port; choose a TLS trust mode (ca_file or server_fingerprint).",
+		"_comment":                "TLS trust: leave empty=normal verification(public cert); or set server_fingerprint / ca_file / insecure_skip_verify.",
 	}
 	downloadJSON(w, "client.json", doc)
 }

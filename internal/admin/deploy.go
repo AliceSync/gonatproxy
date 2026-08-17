@@ -352,7 +352,7 @@ func (s *Server) buildClientConfig() ([]byte, error) {
 		"insecure_skip_verify":    false,
 		"server_name":             "",
 		"reconnect_delay_seconds": 5,
-		"_comment":                "Set a TLS trust mode (ca_file or server_fingerprint) and, if needed, correct server host.",
+		"_comment":                "TLS trust: leave empty=normal verification(public cert); or set server_fingerprint / ca_file / insecure_skip_verify.",
 	}
 	return json.MarshalIndent(doc, "", "  ")
 }
@@ -379,7 +379,7 @@ func (s *Server) buildNATConfig(id string) ([]byte, error) {
 		"services":                nc.Services,
 		"dial_timeout_seconds":    10,
 		"reconnect_delay_seconds": 5,
-		"_comment":                "Set a TLS trust mode.",
+		"_comment":                "TLS trust: leave empty=normal verification; or set server_fingerprint / ca_file / insecure_skip_verify.",
 	}
 	return json.MarshalIndent(doc, "", "  ")
 }

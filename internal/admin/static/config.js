@@ -126,9 +126,24 @@
       if (!id || !id.trim()) return;
       id = id.trim();
       if (cfg.clients[id]){ DSH.alert('已存在同名 NAT 客户端：'+id); return; }
-      cfg.clients[id] = { secret: '', services: [] };
+      cfg.clients[id] = { secret: randTokenHex(24), services: [] };
       renderClients();
     });
+  };
+  // Generate a strong random secret for a NAT client token.
+  function randTokenHex(n){
+    if (window.crypto && window.crypto.getRandomValues){
+      var a = new Uint8Array(n); window.crypto.getRandomValues(a);
+      return Array.prototype.map.call(a, function(b){ return ('0'+b.toString(16)).slice(-2); }).join('');
+    }
+    var s=''; for (var i=0;i<n*2;i++) s += '0123456789abcdef'[Math.floor(Math.random()*16)];
+    return s;
+  }
+  window.genSecret = function (id) {
+    if (!cfg.clients[id]) return;
+    cfg.clients[id].secret = randTokenHex(24);
+    renderClients();
+    DSH.toast('已生成新的令牌并回填', 'ok');
   };
   window.delClient = function (id) {
     DSH.confirm('删除 NAT 客户端 ' + id + ' 及其全部服务？', {danger:true, okText:'删除'}).then(ok=>{
@@ -153,6 +168,7 @@
           <div class="client-head">
             <strong>${esc(id)}</strong>
             <input class="c-secret" type="text" placeholder="secret（令牌）" value="${esc(nc.secret||'')}">
+            <button class="btn btn-ghost btn-sm" onclick="genSecret('${id}')">生成</button>
             <button class="btn btn-danger btn-sm" onclick="delClient('${id}')">删除客户端</button>
           </div>
           <div class="services" data-id="${id}"></div>

@@ -1,12 +1,13 @@
-// Package tlscfg builds *tls.Config for outbound clients with three trust
-// modes, selected via the fields below:
+// Package tlscfg builds *tls.Config for outbound clients.
+// Trust precedence:
 //
-//   - fingerprint:     verify the server's leaf certificate against a SHA-256
+//   - fingerprint:        verify the peer leaf certificate against a SHA-256
 //     hex fingerprint (most useful when you cannot pin the CA because certs
 //     rotate, e.g. ACME issuance).
-//   - insecure:        skip verification entirely (insecure; discouraged).
-//   - default:         verify against the CA in CAFile (the recommended,
-//     "trusted" mode).
+//   - insecure:           skip verification entirely (insecure; discouraged).
+//   - ca_file:            verify against a custom CA bundle (private CA).
+//   - default (nothing):  normal TLS verification against the system's
+//     built-in CA store — no ca_file needed for publicly-trusted certs.
 package tlscfg
 
 import (
@@ -19,8 +20,8 @@ import (
 	"strings"
 )
 
-// Client holds outbound TLS trust configuration. Exactly one behaviour is
-// used; the precedence is fingerprint > insecure > CA.
+// Client holds outbound TLS trust configuration. Precedence:
+// fingerprint > insecure > CAFile(/system default).
 type Client struct {
 	// CAFile is a PEM CA certificate used to verify the server's cert.
 	CAFile string
@@ -33,6 +34,13 @@ type Client struct {
 }
 
 // Build produces a *tls.Config for the given peer address (host:port).
+//
+// Precedence:
+//  1. server_fingerprint — verify the peer leaf against this hex(sha256).
+//  2. insecure_skip_verify — disable verification entirely.
+//  3. ca_file — verify against a custom CA bundle (private CA).
+//  4. (default) — normal TLS verification against the system's own built-in
+//     CA store (the OS already ships trusted public roots; no ca_file needed).
 func (c Client) Build() (*tls.Config, error) {
 	cfg := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -61,15 +69,16 @@ func (c Client) Build() (*tls.Config, error) {
 		return cfg, nil
 	}
 
-	// Default: verify against a CA (trusted).
-	if c.CAFile == "" {
-		return nil, fmt.Errorf("tlscfg: nothing to trust — set ca_file, server_fingerprint, or insecure_skip_verify")
+	// Default: normal verification against system roots. A custom ca_file (e.g.
+	// a private/internal CA) overrides the root pool; otherwise the local OS
+	// trust store's built-in public certificates are used.
+	if c.CAFile != "" {
+		pool, err := loadPool(c.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		cfg.RootCAs = pool
 	}
-	pool, err := loadPool(c.CAFile)
-	if err != nil {
-		return nil, err
-	}
-	cfg.RootCAs = pool
 	return cfg, nil
 }
 

@@ -56,16 +56,17 @@ deepseekaiworker/
 
 ## 客户端 TLS 信任（client & natclient）
 
-客户端要校验服务器证书，三种模式在配置里选一个即可：
+客户端要校验服务器证书。信任方式按配置自动选择，优先级
+`server_fingerprint` > `insecure_skip_verify` > `ca_file` > **系统默认**：
 
 | 字段 | 含义 |
 |------|------|
-| `ca_file` *(默认)* | 用受信任的 CA 校验。**推荐。** |
 | `server_fingerprint` | 把服务器的叶子证书与这个 hex(sha256) 比对。CA 轮换（如 ACME）无法固定 CA 时可用。 |
 | `insecure_skip_verify` | 完全跳过校验（仅用于首次搭建/内网实验）。 |
+| `ca_file` | 用自定义 CA 包校验（私有/自签 CA）。 |
+| **都不设（默认）** | **正常 TLS 校验**，直接用系统内置的公共 CA 证书库——无需本地 ca_file；只要服务器使用的是公开受信证书（如 ACME/Let's Encrypt）即可。 |
 
-三者都不设则启动报错 *"nothing to trust"*。优先级：`server_fingerprint` >
-`insecure_skip_verify` > `ca_file`。
+即：本地/开发用自签或临时证书时，请显式选 `insecure_skip_verify` 或提供 `ca_file` 或 `server_fingerprint`；生产公开证书什么都不用配，走正常校验即可。
 
 ## server 配置（`configs/server.json`）
 

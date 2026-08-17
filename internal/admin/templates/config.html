@@ -104,6 +104,10 @@
       <button class="btn btn-primary" onclick="save()">保存配置</button>
       <a class="btn btn-ghost" href="/dashboard">取消</a>
     </div>
+    <p class="muted">
+      保存即生效（无需重启）：路由、NAT 客户端及其令牌、拨号超时、证书、deploy_dir、公网地址、控制台账号密码。
+      <b>需重启生效</b>（涉及监听/日志/控制台 TLS 的创建）：中继与控制台监听地址、日志文件与轮转、控制台证书/TLS、证书检查间隔。
+    </p>
   </main>
 
   <!-- file selector modal -->

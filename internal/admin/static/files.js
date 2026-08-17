@@ -46,7 +46,7 @@
       nameTd.style.cursor='pointer';
     } else if (select) {
       nameTd.title = '选择此文件';
-      nameTd.onclick = () => { try { parent.postMessage({type:'fileSelect', path:en.path, field}, '*'); window.close(); } catch(e){} };
+      nameTd.onclick = () => selectPath(en.path);
       nameTd.style.cursor='pointer'; nameTd.style.color='var(--accent)';
     } else {
       nameTd.onclick = () => { /* single click = maybe edit */ };
@@ -125,6 +125,12 @@
 
   window.cd = p => { load(p); };
   document.getElementById('goTo').addEventListener('keydown', e=>{ if(e.key==='Enter') load(document.getElementById('goTo').value); });
+
+  // select the CURRENT directory (for directory-valued fields like deploy_dir)
+  function selectPath(path){
+    try { parent.postMessage({type:'fileSelect', path, field}, '*'); window.close(); } catch(e){}
+  }
+  window.pickCurrentDir = () => selectPath(cur);
 
   load('/');
 })();

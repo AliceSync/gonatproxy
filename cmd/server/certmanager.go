@@ -34,6 +34,30 @@ func newCertManager(certFile, keyFile string) *CertManager {
 	return &CertManager{certFile: certFile, keyFile: keyFile}
 }
 
+// paths returns the current cert/key paths (safe to call from anywhere).
+func (cm *CertManager) paths() (string, string) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.certFile, cm.keyFile
+}
+
+// Update switches the manager to a new cert_file/key_file (e.g. after the admin
+// edits the configuration) and immediately (re)loads the certificate — either
+// the new on-disk pair, or an ephemeral one if the paths are empty/missing.
+// This makes config edits take effect without restarting the process.
+func (cm *CertManager) Update(certFile, keyFile string) {
+	curC, curK := cm.paths()
+	if curC == certFile && curK == keyFile {
+		return // unchanged
+	}
+	cm.mu.Lock()
+	cm.certFile = certFile
+	cm.keyFile = keyFile
+	cm.mu.Unlock()
+	log.Printf("cert manager: configured cert_file=%q key_file=%q", certFile, keyFile)
+	cm.Ensure()
+}
+
 // GetCertificate is wired into tls.Config and returns the current cert.
 func (cm *CertManager) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	cm.mu.RLock()
@@ -49,11 +73,12 @@ func (cm *CertManager) IsEphemeral() bool {
 }
 
 func (cm *CertManager) filesAvailable() bool {
-	if cm.certFile == "" || cm.keyFile == "" {
+	certFile, keyFile := cm.paths()
+	if certFile == "" || keyFile == "" {
 		return false
 	}
-	_, e1 := os.Stat(cm.certFile)
-	_, e2 := os.Stat(cm.keyFile)
+	_, e1 := os.Stat(certFile)
+	_, e2 := os.Stat(keyFile)
 	return e1 == nil && e2 == nil
 }
 
@@ -80,7 +105,8 @@ func (cm *CertManager) Watch(interval time.Duration) {
 }
 
 func (cm *CertManager) reload() {
-	cert, err := tls.LoadX509KeyPair(cm.certFile, cm.keyFile)
+	certFile, keyFile := cm.paths()
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		log.Printf("WARN: cert reload failed (keeping previous): %v", err)
 		return
@@ -89,7 +115,7 @@ func (cm *CertManager) reload() {
 	cm.cert = &cert
 	cm.ephemeral = false
 	cm.mu.Unlock()
-	log.Printf("certificate loaded/reloaded: %s", cm.certFile)
+	log.Printf("certificate loaded/reloaded: %s", certFile)
 }
 
 func (cm *CertManager) genEphemeral() {

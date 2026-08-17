@@ -16,7 +16,7 @@
   <main class="container">
     <div class="page-head">
       <h2>文件管理器</h2>
-      {{if .SelectMode}}<div class="muted">选择模式：点击文件以填入 <code>{{.Field}}</code></div>
+      {{if .SelectMode}}<div class="muted">选择模式：点击<b>文件</b>填入 <code>{{.Field}}</code>；进入目录后点<b>「选取当前目录」</b>可填入目录。</div>
       {{else}}<a class="btn btn-ghost" href="/config">← 返回配置</a>{{end}}
     </div>
     <div class="toolbar">
@@ -24,6 +24,7 @@
       <div class="toolbar-actions">
         <input type="text" id="goTo" placeholder="跳转目录 e.g. /etc/deepseek" title="输入绝对路径回车跳转">
         <button class="btn btn-ghost btn-sm" onclick="cd(document.getElementById('goTo').value)">Go</button>
+        {{if .SelectMode}}<button class="btn btn-primary btn-sm" onclick="pickCurrentDir()">选取当前目录</button>{{end}}
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('fileUp').click()">上传</button>
         <button class="btn btn-ghost btn-sm" onclick="mkdir()">新建目录</button>
         <button class="btn btn-ghost btn-sm" onclick="newFile()">新建文件</button>

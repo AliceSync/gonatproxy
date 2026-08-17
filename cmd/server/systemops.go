@@ -8,7 +8,6 @@ package main
 //   restart. mv-replace + fork start.
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -65,24 +64,24 @@ func buildAdminHooks(cfgPath string) *admin.SystemHooks {
 		if grace <= 0 {
 			grace = 3 * time.Second
 		}
-		// Under systemd, restarting should go through systemd so it keeps owning
-		// the unit; forking our own copy would orphan a second instance.
-		if systemdOwnsUs() {
-			log.Printf("restart requested; delegating to systemctl restart %s", serviceUnitName())
-			if out, err := sysctlOutput("restart", serviceUnitName()); err != nil {
-				return fmt.Errorf("systemctl restart: %s", out)
+		// ALWAYS fork, as requested: we never consult systemctl here, so even
+		// when this process happened to be launched from a systemd-spawned shell
+		// (via `start`), restarting still works by self-forking — NOT by
+		// delegating to systemctl which would target a unit we aren't really.
+		// Systemd lifecycle control lives on the 服务(services) page only.
+		log.Printf("restart requested (self-fork); scheduling restart")
+		go func() {
+			time.Sleep(1200 * time.Millisecond) // let the HTTP response flush & UI update first
+			log.Printf("closing listeners, then forking replacement")
+			stopAll()
+			time.Sleep(grace)
+			if err := forkSelf(exe, args); err != nil {
+				log.Printf("restart fork failed: %v", err)
+				return
 			}
-			return nil
-		}
-		log.Printf("restart requested; closing listeners, draining %s", grace)
-		stopAll()
-		time.Sleep(grace)
-		if err := forkSelf(exe, args); err != nil {
-			log.Printf("restart fork failed: %v", err)
-			return err
-		}
-		log.Println("restart: forked replacement; exiting")
-		go func() { time.Sleep(300 * time.Millisecond); os.Exit(0) }()
+			log.Println("restart: forked replacement; exiting")
+			go func() { time.Sleep(300 * time.Millisecond); os.Exit(0) }()
+		}()
 		return nil
 	}
 

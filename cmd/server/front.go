@@ -9,12 +9,10 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
-	"os"
-	"syscall"
 	"time"
 
 	"deepseekaiworker/internal/admin"
@@ -166,44 +164,29 @@ func startShared(ctx context.Context, listenAddr string, tlsCfg *tls.Config, rt 
 }
 
 // runIndependent starts the console on its own listener (TLS if certs given).
+// The listener is registered with stopAll so a graceful restart frees the
+// console port too — otherwise the forked replacement would fail to bind it.
 func runIndependent(ctx context.Context, adminListen, certFile, keyFile string, adm *admin.Server) error {
-	if keyFile != "" {
-		return adm.RunTLS(ctx, adminListen, certFile, keyFile)
-	}
-	ln, err := listenOrEphemeral(adminListen)
+	ln, err := listenStrict(adminListen)
 	if err != nil {
 		return err
 	}
+	registerStop(func() { ln.Close() })
 	go func() { <-ctx.Done(); ln.Close() }()
-	return adm.RunPlainOn(ctx, ln)
-}
-
-// listenOrEphemeral binds addr; if the address is already in use it falls back
-// to an ephemeral free port (used for init-mode web console when 8443 is busy).
-func listenOrEphemeral(addr string) (net.Listener, error) {
-	ln, err := net.Listen("tcp", addr)
-	if err == nil {
-		return ln, nil
-	}
-	if !isAddrInUse(err) {
-		return nil, err
-	}
-	fallback, ferr := net.Listen("tcp", "127.0.0.1:0")
-	if ferr != nil {
-		return nil, ferr
-	}
-	log.Printf("WARNING: %s already in use; using ephemeral port %d for web console", addr, fallback.Addr().(*net.TCPAddr).Port)
-	return fallback, nil
-}
-
-func isAddrInUse(err error) bool {
-	var op *net.OpError
-	if errors.As(err, &op) {
-		var sys *os.SyscallError
-		if errors.As(err, &sys) {
-			return errors.Is(sys.Err, syscall.EADDRINUSE)
+	var target net.Listener = ln
+	if keyFile != "" {
+		cert, cerr := tls.LoadX509KeyPair(certFile, keyFile)
+		if cerr != nil {
+			ln.Close()
+			return fmt.Errorf("load console cert: %w", cerr)
 		}
-		return errors.Is(op.Err, syscall.EADDRINUSE)
+		target = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
 	}
-	return false
+	return adm.RunPlainOn(ctx, target)
+}
+
+// listenStrict binds addr. No ephemeral fallback: an occupied address is a hard
+// startup error so the user sees it and the process exits non-zero.
+func listenStrict(addr string) (net.Listener, error) {
+	return net.Listen("tcp", addr)
 }

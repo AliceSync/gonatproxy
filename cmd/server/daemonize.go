@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 
 	"deepseekaiworker/internal/config"
@@ -37,6 +36,12 @@ func daemonize(cfgPath string, cfg *config.ServerConfig, missing bool) {
 	if cfg != nil {
 		maxBytes, maxFiles = cfg.LogMaxBytes, cfg.LogMaxFiles
 	}
+	// Foreground pre-flight: if any port the child will bind is already in use,
+	// fail NOW (exit non-zero) instead of backgrounding a process that can't
+	// bind and then silently dying — that's what produces the confusion.
+	if err := preflightListen(cfg); err != nil {
+		log.Fatalf("start 前置检查失败，%v", err)
+	}
 
 	// Child will own + rotate the log file itself. Bypass the parent TTY so the
 	// daemon detaches cleanly; run() re-routes stdout/stderr to the rotator.
@@ -52,33 +57,83 @@ func daemonize(cfgPath string, cfg *config.ServerConfig, missing bool) {
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("daemonize: start: %v", err)
 	}
+	relay, console := announceAddrs(cfg)
 	fmt.Printf("deepseek-server running in background: pid=%d log=%s\n", cmd.Process.Pid, logFile)
-	fmt.Printf("web console available at https://%s (or per config)\n", cfgListen(cfg))
+	fmt.Printf("relay listen : %s\n", relay)
+	fmt.Printf("web console  : https://%s\n", console)
+	if local := localConsoleURL(console); local != "" {
+		fmt.Printf("  local access: https://%s\n", local)
+	} else {
+		fmt.Printf("  (console shares the relay port; https://%s)\n", console)
+	}
 
 	// Detach: release the child from this process group without waiting.
 	_ = cmd.Process.Release()
 }
 
-// cfgListen returns a usable host:port for the console, defaulting the host to
-// 127.0.0.1 (never a bare ':port').
-func cfgListen(cfg *config.ServerConfig) string {
-	addr := ""
-	if cfg != nil && cfg.Admin != nil {
-		addr = cfg.Admin.Listen
+// announceAddrs returns the configured (relay, console) host:port to display
+// BEFORE the process switches to the background. It reflects the config verbatim,
+// never collapsing a wildcard bind down to 127.0.0.1.
+func announceAddrs(cfg *config.ServerConfig) (string, string) {
+	relay := config.DefaultListenAddr
+	if cfg != nil && cfg.Listen != "" {
+		relay = cfg.Listen
 	}
-	if addr == "" {
-		if cfg != nil && cfg.Listen != "" {
-			addr = cfg.Listen
-		} else {
-			addr = ":8443"
-		}
+	console := relay
+	if cfg != nil && cfg.Admin != nil && cfg.Admin.Listen != "" {
+		console = cfg.Admin.Listen
 	}
+	return normalizeWildcard(relay), normalizeWildcard(console)
+}
+
+// localConsoleURL returns a 127.0.0.1 URL when console binds all interfaces
+// (a catch-all wildcard host), else "".
+func localConsoleURL(console string) string {
+	host, port, err := net.SplitHostPort(console)
+	if err != nil {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return net.JoinHostPort("127.0.0.1", port)
+	}
+	return ""
+}
+
+// normalizeWildcard turns an empty/wildcard host into "0.0.0.0" so the printed
+// bind address is explicit and correct.
+func normalizeWildcard(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return strings.TrimPrefix(addr, ":")
+		return addr
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		host = "127.0.0.1"
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return net.JoinHostPort("0.0.0.0", port)
 	}
 	return net.JoinHostPort(host, port)
+}
+
+// preflightListen verifies that every address the child will bind is free. It
+// binds each once (then closes) so an occupied port is reported in the
+// FOREGROUND with a clear error + non-zero exit, long before switching to the
+// background. No random/ephemeral port fallback is used anywhere.
+func preflightListen(cfg *config.ServerConfig) error {
+	relay := config.DefaultListenAddr
+	if cfg != nil && cfg.Listen != "" {
+		relay = cfg.Listen
+	}
+	want := map[string]bool{relay: true}
+	if cfg != nil && cfg.Admin != nil && cfg.Admin.Listen != "" && !sameAddr(cfg.Admin.Listen, relay) {
+		// independent console port is also held by the child
+		want[cfg.Admin.Listen] = true
+	}
+	for addr := range want {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("端口 %s 被占用，无法后台启动", addr)
+		}
+		l.Close()
+	}
+	return nil
 }

@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p bin
-VERSION="$(date)"
+VERSION="$(date +%Y.%m.%d-%H%M%S)"
 LDF="-s -w -X main.version=$VERSION"
 
 echo "building server..."

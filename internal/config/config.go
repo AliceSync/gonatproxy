@@ -9,12 +9,13 @@ import (
 	"os"
 )
 
-// DefaultListenAddr is used as the relay+console (shared) listen address.
-const DefaultListenAddr = ":8443"
+// DefaultListenAddr is used as the relay+console (shared) listen address when
+// the config leaves `listen` unset. 0.0.0.0 = all network interfaces.
+const DefaultListenAddr = "0.0.0.0:8443"
 
-// DefaultAdminListenAddr is used only as a fallback; a server config with an
-// empty admin.listen means the console SHOULD share the relay port (8443).
-const DefaultAdminListenAddr = ":8443"
+// DefaultAdminListenAddr is used only in messages; an empty admin.listen means
+// the console SHOULD share the relay port (which defaults to 0.0.0.0:8443).
+const DefaultAdminListenAddr = "0.0.0.0:8443"
 
 // Service describes one locally-exposed service on a NAT client (for export and
 // display; live routing uses what the NAT client reports at registration time).

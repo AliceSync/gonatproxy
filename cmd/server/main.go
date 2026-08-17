@@ -324,22 +324,37 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 	}
 	relayOK := !(initMode || sc == nil || len(sc.Routes) == 0)
 
+	// Certificates: create before the admin apply closures so config changes can
+	// hot-swap the cert on save (no restart needed to pick up new cert paths).
+	cm := newCertManager(rt.scCertFile(), rt.scKeyFile())
+
 	adm := admin.New(cfgPath,
 		func() *config.ServerConfig { return rt.getConfig() },
 		func(next *config.ServerConfig) error {
+			var err error
 			if !rt.hasAdmin() {
 				// first account creation: allow a config with no routes yet
-				return rt.applyLoose(cfgPath, next)
+				err = rt.applyLoose(cfgPath, next)
+			} else {
+				err = rt.applyConfig(cfgPath, next)
 			}
-			return rt.applyConfig(cfgPath, next)
+			if err == nil && next != nil {
+				// Let a cert_file/key_file edit take effect immediately.
+				cmf, cmk := "", ""
+				if next.CertFile != "" || next.KeyFile != "" {
+					cmf, cmk = next.CertFile, next.KeyFile
+				} else if next.Admin != nil {
+					cmf, cmk = next.Admin.CertFile, next.Admin.KeyFile
+				}
+				cm.Update(cmf, cmk)
+			}
+			return err
 		},
 		func() error { return nil },
 	)
 	adm.Hooks = buildAdminHooks(cfgPath)
 	adm.DeployDir = resolveDeployDir(sc)
 
-	// Certificates: ACME files if present, else ephemeral in-memory self-signed.
-	cm := newCertManager(rt.scCertFile(), rt.scKeyFile())
 	cm.Ensure()
 	go cm.Watch(time.Duration(rt.certCheckSecs()) * time.Second)
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: cm.GetCertificate}
@@ -358,27 +373,28 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 			// init mode: only the console runs; allow port fallback if busy.
 			running, err := startSharedInit(ctx, listenAddr, tlsCfg, adm)
 			if err != nil {
-				log.Printf("announce: %v", err)
+				log.Fatalf("initialization mode: 无法监听 %s: %v", listenAddr, err)
 			}
-			log.Printf("initialization mode: web console only (https) on %s — no relay until a config is saved", running)
+			log.Printf("initialization mode: web console only on %s（初始化模式，保存配置后开启中继）；访问 https://%s，本机 https://127.0.0.1:%s",
+				normalizeWildcard(running), normalizeWildcard(running), portOf(running))
 			<-ctx.Done()
 			return
 		}
 		// full mode with shared port
-		addr, err := startShared(ctx, listenAddr, tlsCfg, rt, relayOK, adm)
-		if err != nil {
-			log.Printf("shared listen %s: %v", listenAddr, err)
-		} else {
-			logRouteSummary(rt)
-			log.Printf("console + relay share TLS port %s", addr)
+		if _, err := startShared(ctx, listenAddr, tlsCfg, rt, relayOK, adm); err != nil {
+			log.Fatalf("无法监听 %s: %v —— 请检查端口占用或改用 -config 指定其它监听地址", listenAddr, err)
 		}
+		logRouteSummary(rt)
+		// Show the intended (configured) address; net.Listen on dual-stack hosts
+		// reports [::] for 0.0.0.0, which reads wrongly. Relay + console share it.
+		log.Printf("console + relay 共享 TLS 端口 %s（按配置监听）", normalizeWildcard(listenAddr))
 		<-ctx.Done()
 		return
 	}
 
-	// independent: console on its own listener
+	// independent: console on its own listener, relay on sc.Listen
 	cert, key := rt.scAdminCert()
-	if key != "" {
+	if cert == "" || key == "" {
 		cert, key = rt.scCertFile(), rt.scKeyFile()
 	}
 	if initMode || sc == nil {
@@ -388,26 +404,23 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 	}
 	go func() {
 		if err := runIndependent(ctx, adminListen, cert, key, adm); err != nil && ctx.Err() == nil {
-			log.Printf("admin console: %v", err)
+			// Serve-time errors include "use of closed network connection"
+			// (listener closed by a graceful restart) — those are NOT startup
+			// failures and must not kill the process before the fork completes.
+			log.Printf("admin console %s: %v", adminListen, err)
 		}
 	}()
 	if err := startRelay(sc, rt, ctx, tlsCfg); err != nil {
-		log.Printf("relay: %v", err)
+		log.Fatalf("relay 无法监听 %s: %v —— 请检查端口占用或改用 -config 指定其它监听地址", sc.Listen, err)
 	}
+	<-ctx.Done()
 }
 
 // startSharedInit runs the web console on a single TLS port in init mode, with
-// automatic fallback to an ephemeral port if the default is busy.
+// startSharedInit runs the web console on a single TLS port in init mode.
 func startSharedInit(ctx context.Context, addr string, tlsCfg *tls.Config, adm *admin.Server) (string, error) {
 	raw, err := net.Listen("tcp", addr)
-	if err != nil && isAddrInUse(err) {
-		fallback, ferr := net.Listen("tcp", "127.0.0.1:0")
-		if ferr != nil {
-			return "", ferr
-		}
-		log.Printf("WARNING: %s busy; using ephemeral port %d for web console", addr, fallback.Addr().(*net.TCPAddr).Port)
-		raw = fallback
-	} else if err != nil {
+	if err != nil {
 		return "", err
 	}
 	go func() { <-ctx.Done(); raw.Close() }()
@@ -464,7 +477,7 @@ func startRelay(sc *config.ServerConfig, rt *runtime, ctx context.Context, tlsCf
 		return fmt.Errorf("relay listen %s: %w", sc.Listen, err)
 	}
 	registerStop(func() { ln.Close() })
-	log.Printf("relay listening on %s (ACME cert reload every %ds)", sc.Listen, sc.CertCheckSeconds)
+	log.Printf("relay listening on %s (ACME cert reload every %ds)", normalizeWildcard(sc.Listen), sc.CertCheckSeconds)
 	logRouteSummary(rt)
 
 	go func() {
@@ -555,4 +568,13 @@ func resolveDeployDir(sc *config.ServerConfig) string {
 func serviceBinaryThere(dir, name string) bool {
 	_, err := os.Stat(filepath.Join(dir, name))
 	return err == nil
+}
+
+// portOf returns the port portion of host:port (used for messages).
+func portOf(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return port
 }

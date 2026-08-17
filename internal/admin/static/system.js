@@ -17,9 +17,7 @@
       document.getElementById('probeText').innerHTML =
         'unit <code>'+d.unit+'</code> &nbsp; 配置 <code>'+d.config+'</code> &nbsp; 可执行文件 <code>'+d.exe+'</code>';
       const hint = document.getElementById('restartHint');
-      hint.textContent = d.managed
-        ? '当前由 systemd 管理：重启将交给 systemctl restart。'
-        : '当前非 systemd 管理：重启会 fork 新进程，不会接管 systemd 单位。建议在【服务】页启用 systemd 模式。';
+      hint.textContent = '重启始终采用 fork（self-fork），不检查/不委托 systemctl——即使当前是 systemd 管理也是一样。systemd 生命周期（启用/启动/停止等）请在【服务】页管理。';
       const hasStaged = d.staged==='1';
       applyBtn.disabled = !hasStaged;
       document.getElementById('stagedNote').textContent = hasStaged ? '已有待应用的更新文件：点击【应用已上传的更新并重启】生效。' : '';

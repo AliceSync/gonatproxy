@@ -8,8 +8,6 @@
   if (window.DSH) return;
   window.DSH = {};
 
-  const esc = s => String(s); // not strictly needed; we avoid injecting raw user text into HTML below
-
   const overlay = document.createElement('div');
   overlay.className = 'dlg-bg hidden';
   overlay.innerHTML =
@@ -57,7 +55,9 @@
       return b;
     };
     if (o.showCancel !== false) addBtn(o.cancelText || '取消', 'btn btn-ghost', cancel);
-    const ok = addBtn(o.okText || '确定', (o.danger ? 'btn btn-danger' : 'btn btn-primary'), () => finish(input.value));
+    // For confirm/alert the OK yields `true`; for prompt it yields the input value.
+    const ok = addBtn(o.okText || '确定', (o.danger ? 'btn btn-danger' : 'btn btn-primary'), () => finish(isPrompt ? input.value : true));
+    overlay.classList.remove('hidden'); // << show the dialog
     ok.focus();
     if (isPrompt) input.focus();
     current = { resolve: null, isPrompt: isPrompt };

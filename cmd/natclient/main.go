@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"deepseekaiworker/internal/mux"
+	"deepseekaiworker/internal/proxy"
 	"deepseekaiworker/internal/service"
 	"deepseekaiworker/internal/tlscfg"
 )
@@ -32,6 +33,10 @@ type ClientConfig struct {
 	ServerFingerprint  string `json:"server_fingerprint"`
 	InsecureSkipVerify bool   `json:"insecure_skip_verify"`
 	ServerName         string `json:"server_name"`
+
+	// Proxy is an optional forward proxy to reach the server, e.g.
+	// "socks5://127.0.0.1:1080", "socks4/4a://...", "http://...".
+	Proxy string `json:"proxy,omitempty"`
 
 	ClientID              string            `json:"client_id"`
 	Secret                string            `json:"secret"`
@@ -157,9 +162,10 @@ func svcAddr(svc mux.ServiceInfo) string {
 // runSession maintains one connected session: registers services and serves
 // inbound streams by dialing local services.
 func runSession(cc *ClientConfig, tlsCfg *tls.Config) error {
-	conn, err := tls.Dial("tcp", cc.Server, tlsCfg)
+	timeout := time.Duration(cc.DialTimeoutSeconds) * time.Second
+	conn, err := proxy.DialTLS(cc.Proxy, cc.Server, tlsCfg, timeout)
 	if err != nil {
-		return fmt.Errorf("dial server: %w", err)
+		return fmt.Errorf("dial server (proxy=%q): %w", cc.Proxy, err)
 	}
 	log.Printf("connected to %s (tls)", cc.Server)
 
@@ -180,7 +186,6 @@ func runSession(cc *ClientConfig, tlsCfg *tls.Config) error {
 	for _, svc := range cc.Services {
 		byPort[svc.Port] = svcAddr(svc)
 	}
-	timeout := time.Duration(cc.DialTimeoutSeconds) * time.Second
 
 	m.SetOnOpen(func(s *mux.Stream, port uint16) {
 		addr, ok := byPort[int(port)]

@@ -264,8 +264,9 @@ func (s *Server) serveDeployConfig(w http.ResponseWriter, r *http.Request, tail 
 	if len(parts) > 1 {
 		suffix = parts[1]
 	}
+	proxyStr := r.URL.Query().Get("proxy")
 	if role == "client" {
-		b, err := s.buildClientConfig()
+		b, err := s.buildClientConfig(proxyStr)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -277,7 +278,7 @@ func (s *Server) serveDeployConfig(w http.ResponseWriter, r *http.Request, tail 
 	}
 	if role == "natclient" {
 		id := strings.TrimSuffix(suffix, ".json")
-		b, err := s.buildNATConfig(id)
+		b, err := s.buildNATConfig(id, proxyStr)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -336,7 +337,7 @@ func archOrAuto(a string) string {
 }
 
 // buildClientConfig returns a ready client.json (server per current config).
-func (s *Server) buildClientConfig() ([]byte, error) {
+func (s *Server) buildClientConfig(proxyStr string) ([]byte, error) {
 	cfg := s.GetConfig()
 	server := ""
 	if cfg != nil {
@@ -354,11 +355,14 @@ func (s *Server) buildClientConfig() ([]byte, error) {
 		"reconnect_delay_seconds": 5,
 		"_comment":                "TLS trust: leave empty=normal verification(public cert); or set server_fingerprint / ca_file / insecure_skip_verify.",
 	}
+	if proxyStr != "" {
+		doc["proxy"] = proxyStr
+	}
 	return json.MarshalIndent(doc, "", "  ")
 }
 
 // buildNATConfig returns a ready natclient-<id>.json for the given client id.
-func (s *Server) buildNATConfig(id string) ([]byte, error) {
+func (s *Server) buildNATConfig(id, proxyStr string) ([]byte, error) {
 	cfg := s.GetConfig()
 	if cfg == nil {
 		return nil, errors.New("no config")
@@ -380,6 +384,9 @@ func (s *Server) buildNATConfig(id string) ([]byte, error) {
 		"dial_timeout_seconds":    10,
 		"reconnect_delay_seconds": 5,
 		"_comment":                "TLS trust: leave empty=normal verification; or set server_fingerprint / ca_file / insecure_skip_verify.",
+	}
+	if proxyStr != "" {
+		doc["proxy"] = proxyStr
 	}
 	return json.MarshalIndent(doc, "", "  ")
 }

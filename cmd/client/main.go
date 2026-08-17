@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"deepseekaiworker/internal/mux"
+	"deepseekaiworker/internal/proxy"
 	"deepseekaiworker/internal/service"
 	"deepseekaiworker/internal/tlscfg"
 )
@@ -34,6 +35,10 @@ type ClientConfig struct {
 	ServerFingerprint  string `json:"server_fingerprint"`
 	InsecureSkipVerify bool   `json:"insecure_skip_verify"`
 	ServerName         string `json:"server_name"`
+
+	// Proxy is an optional forward proxy to reach the server, e.g.
+	// "socks5://127.0.0.1:1080", "socks4/4a://...", "http://...".
+	Proxy string `json:"proxy,omitempty"`
 
 	ReconnectDelaySeconds int `json:"reconnect_delay_seconds"`
 }
@@ -137,9 +142,9 @@ func tlsConf(cc *ClientConfig, server string) (*tls.Config, error) {
 // runSession maintains one TLS connection + set of local listeners until the
 // connection dies, then returns.
 func runSession(cc ClientConfig, tlsCfg *tls.Config) error {
-	conn, err := tls.Dial("tcp", cc.Server, tlsCfg)
+	conn, err := proxy.DialTLS(cc.Proxy, cc.Server, tlsCfg, 10*time.Second)
 	if err != nil {
-		return fmt.Errorf("dial server: %w", err)
+		return fmt.Errorf("dial server (proxy=%q): %w", cc.Proxy, err)
 	}
 	log.Printf("connected to %s (tls)", cc.Server)
 

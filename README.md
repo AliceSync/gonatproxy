@@ -99,6 +99,15 @@ deepseekaiworker/
 ]
 ```
 
+### 前置代理（client 与 natclient 都支持）
+
+若目标主机必须通过代理才能访问外网，可在配置里加一行 `proxy`（也支持
+`socks4/socks4a/http`），出站连接（去连 server）会先经该代理：
+
+```json
+"proxy": "socks5://user:pass@127.0.0.1:1080"
+```
+
 修改 NAT 客户端的配置只需改 NAT 那侧：重连后它会重新注册，服务器更新视图。
 
 ## 构建
@@ -237,6 +246,9 @@ sudo deepseek-natclient -config /etc/deepseek/natclient-<id>.json service start
   若该架构缺失则**报错**（列出现有架构），**不会**悄悄下发错误架构。请求形如
   `/api/deploy/deepseek-client?arch=arm64`。
 - 二进制命名遵循 `scripts/build.sh` 输出：`deepseek-<server|client|natclient>_linux_<amd64|arm64>`。
+- **前置代理**：页面可填"前置代理"（`socks5/socks4/socks4a/http://`）。生成时会：
+  ① 把 `proxy` 写进下发的 `client.json`/`natclient.json`（运行时出站走该代理）；
+  ② 让安装命令里的 `curl` 也用 `-x <代理>` 下载二进制/配置（目标主机若是受限网络也能拉到文件）。
 
 > 部署助手依赖 `deploy_dir` 指向已经 `scripts/build.sh` 编译好的（含 arm64/amd64
 > 两种架构的）deepseek-server/client/natclient 二进制。

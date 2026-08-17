@@ -33,6 +33,9 @@
       <label class="check-row" style="padding-top:6px; font-size:13px; color:var(--muted)">
         <input type="checkbox" id="useSudo" checked> 命令使用 <code>sudo</code> 提权（目标主机已是 root 时取消勾选）
       </label>
+      <label class="muted" style="font-size:13px">前置代理（可选）
+        <input type="text" id="proxy" style="width:320px; margin:4px 0 0" placeholder="socks5://user:pass@127.0.0.1:1080  或 sock4/4a://…、http://…">
+      </label>
       <span class="muted" id="archLine"></span>
     </div>
 
@@ -99,6 +102,8 @@
     const arch = $('deployArch').value;
     const useSudo = $('useSudo').checked;
     const S = useSudo ? 'sudo ' : '';
+    const proxyVal = ($('proxy').value||'').trim();
+    const PX = proxyVal ? ' -x "$PX"' : '';
     const binName = 'deepseek-' + role;
     let binURL = base + '/api/deploy/' + binName;
     if (arch && arch!=='auto') binURL += '?arch=' + arch;
@@ -106,26 +111,30 @@
     let cfgURL, cfgPath, cfgName;
     if (role === 'client') { cfgName='client.json'; cfgPath='/etc/deepseek/client.json'; cfgURL=base+'/api/deploy/cfg/client.json'; }
     else { const id=$('natId').value || ''; cfgName='natclient-'+id+'.json'; cfgPath='/etc/deepseek/'+cfgName; cfgURL=base+'/api/deploy/cfg/natclient/'+id+'.json'; }
+    if (proxyVal) cfgURL += (cfgURL.includes('?')?'&':'?') + 'proxy=' + encodeURIComponent(proxyVal);
     const sedLine = trust==='insecure'
       ? S + "sed -i 's/\"insecure_skip_verify\": false/\"insecure_skip_verify\": true/' " + cfgPath
       : "# 不修改信任; 你可自行编辑 " + cfgPath + " 设置 ca_file 或 server_fingerprint";
     const sudoNote = useSudo
       ? '# 本命令用 sudo 提权执行；首次执行会提示输入 sudo 密码\nsudo -v || { echo "sudo 验证失败"; exit 1; }'
       : '# 请在 root 下直接执行（或已以 root 登录）';
+    const proxyNote = proxyVal ? '# 前置代理: ' + proxyVal : '# 未配置前置代理';
     return `#!/usr/bin/env bash
 set -euo pipefail
 # DeepSeek 部署助手生成
 # 断网自动重试(最多5次/间隔4s)与超时，避免反复创建连接或卡死。
 # 部署令牌 15 分钟有效；若重试后仍失败，重新在服务器上生成命令即可拿到新令牌。
 # 目标架构: ${archLabel}
+${proxyNote}
 ${sudoNote}
 TOK='__DEPLOY_TOKEN__'
+PX='${proxyVal}'
 ${S}mkdir -p /usr/local/bin /etc/deepseek
 # 1) 下载二进制（断网自动重试，最多5次/间隔4s；附超时防止卡死）
-${S}curl -fkS --retry 5 --retry-delay 4 --retry-all-errors --connect-timeout 10 --max-time 900 -H "Authorization: Bearer $TOK" -o /usr/local/bin/${binName} "${binURL}"
+${S}curl -fkS${PX} --retry 5 --retry-delay 4 --retry-all-errors --connect-timeout 10 --max-time 900 -H "Authorization: Bearer $TOK" -o /usr/local/bin/${binName} "${binURL}"
 ${S}chmod +x /usr/local/bin/${binName}
 # 2) 下载配置
-${S}curl -fkS --retry 5 --retry-delay 4 --retry-all-errors --connect-timeout 10 --max-time 120 -H "Authorization: Bearer $TOK" -o ${cfgPath} "${cfgURL}"
+${S}curl -fkS${PX} --retry 5 --retry-delay 4 --retry-all-errors --connect-timeout 10 --max-time 120 -H "Authorization: Bearer $TOK" -o ${cfgPath} "${cfgURL}"
 ${sedLine}
 # 3) 生成并启用、启动 systemd 单元（enable 与 start 分开）
 ${S}/usr/local/bin/${binName} -config ${cfgPath} service install

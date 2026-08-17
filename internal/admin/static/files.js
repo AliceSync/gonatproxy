@@ -6,9 +6,8 @@
   const field = new URLSearchParams(location.search).get('field') || '';
   const listBody = document.getElementById('listBody');
   const breadcrumb = document.getElementById('breadcrumb');
-  const errBox = document.getElementById('err');
 
-  function showErr(m){ errBox.textContent=m; errBox.classList.remove('hidden'); setTimeout(()=>errBox.classList.add('hidden'), 4000); }
+  function showErr(m){ DSH.toast(m, 'err'); }
   function fmt(m){ return new Date(m).toLocaleString(); }
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -61,6 +60,9 @@
       const dl=btn('下载',()=>location.href='/api/files/download?path='+encodeURIComponent(en.path));
       ops.appendChild(edit); ops.appendChild(dl);
     }
+    const rn=btn('重命名',()=>renameFile(en.path, en.name, en.dir));
+    rn.className='btn btn-ghost btn-sm'; // neutral for rename
+    ops.appendChild(rn);
     if (!en.special) {
       const del=btn('删除',()=>delFile(en.path));
       ops.appendChild(del);
@@ -71,6 +73,15 @@
   function td(t){ const x=document.createElement('td'); x.textContent=t; return x; }
   function btn(t,cb){ const b=document.createElement('button'); b.className='btn btn-danger btn-sm'; b.textContent=t; b.onclick=cb; return b; }
   function fmtSize(n){ if(n<1024) return n+' B'; return (n/1024).toFixed(1)+' KB'; }
+
+  function renameFile(path, name, isDir){
+    DSH.prompt('新名称（保留扩展名）', name, {title: isDir?'重命名目录':'重命名文件', okText:'重命名'}).then(n=>{
+      if(!n || n===name) return;
+      fetch('/api/files/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path, new_name:n})})
+        .then(r=>r.json()).then(d=>{ if(d.ok) DSH.toast('已重命名','ok'); else showErr(d.error||'重命名失败'); load(cur); })
+        .catch(e=>showErr('网络错误: '+e));
+    });
+  }
 
   function load(p){ fetch('/api/files/list?path='+encodeURIComponent(p)).then(r=>r.json()).then(d=>{ if(d.error){showErr(d.error);return;} render(d); }).catch(e=>showErr('加载失败')); }
 
@@ -116,12 +127,49 @@
     });
   };
 
+  // upload with live progress + speed
   document.getElementById('fileUp').addEventListener('change', function(e){
+    const input = this;
+    const files = [].slice.call(input.files||[]);
+    if (!files.length) return;
     const fd = new FormData(); fd.append('dir', cur);
-    for (const f of this.files) fd.append('file', f);
-    fetch('/api/files/upload',{method:'POST', body: fd}).then(r=>r.json()).then(d=>{ if(!d.ok) showErr(d.error||'上传失败'); load(cur); this.value=''; })
-      .catch(e=>showErr('上传失败'));
+    let total = 0; for (const f of files) { fd.append('file', f); total += f.size||0; }
+    const running = files.length>1 ? ' 已选 '+files.length+' 个文件' : '';
+    const progress = mkProgressBar();
+    progress.textContent = '上传中… 0%'+running;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/files/upload');
+    let lastLoaded = 0, lastTime = performance.now(), speed = 0;
+    xhr.upload.onprogress = function(ev){
+      if (!ev.lengthComputable) return;
+      const now = performance.now();
+      const dt = (now - lastTime)/1000;
+      if (dt > 0) { speed = (ev.loaded - lastLoaded)/dt; lastTime = now; lastLoaded = ev.loaded; }
+      const pct = total>0 ? Math.round((ev.loaded/ev.total)*100) : 0;
+      progress.textContent = '上传 ' + pct + '%' + running + '  ' + fmtSpeed(speed) + (speed>0?'/s':'');
+      progress.style.width = pct + '%';
+      styleProgress(progress, pct);
+    };
+    xhr.onload = function(){
+      if (xhr.status===200){ try{ const d=JSON.parse(xhr.responseText); if(d.ok) DSH.toast('上传完成','ok'); else DSH.toast(d.error||'上传失败','err'); }catch(_){ DSH.toast('上传失败','err'); } }
+      else DSH.toast('上传失败 ('+xhr.status+')','err');
+      hideProgress(progress); load(cur); input.value='';
+    };
+    xhr.onerror = function(){ DSH.toast('网络错误，上传中断','err'); hideProgress(progress); input.value=''; };
+    xhr.onabort = function(){ hideProgress(progress); };
+    xhr.send(fd);
   });
+
+  function fmtSpeed(b){ if(!isFinite(b)||b<0) return ''; if(b<1024) return Math.round(b)+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; return (b/1024/1024).toFixed(1)+' MB'; }
+  function mkProgressBar(){
+    let host = document.querySelector('.up-host');
+    if (!host){ host=document.createElement('div'); host.className='up-host'; document.body.appendChild(host); }
+    const p = document.createElement('div'); p.className='up-progress'; host.appendChild(p);
+    return p;
+  }
+  function styleProgress(p, pct){ p.style.setProperty('--pct', pct+'%'); p.setAttribute('data-pct', pct); }
+  function hideProgress(p){ p.style.width='100%'; p.classList.add('up-done'); setTimeout(()=>p.remove(), 400); }
 
   window.cd = p => { load(p); };
   document.getElementById('goTo').addEventListener('keydown', e=>{ if(e.key==='Enter') load(document.getElementById('goTo').value); });

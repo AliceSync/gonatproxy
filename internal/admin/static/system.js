@@ -1,12 +1,11 @@
 // System page JS: upload a new binary (optionally apply+restart immediately),
 // apply a previously staged update, and standalone restart.
 (function () {
-  const res = document.getElementById('res');
   const fileInput = document.getElementById('binFile');
   const restartCheck = document.getElementById('restartNow');
   const applyBtn = document.getElementById('applyBtn');
 
-  function msg(m, ok){ res.textContent = m; res.className = 'alert ' + (ok ? 'alert-success' : 'alert-error'); res.classList.remove('hidden'); setTimeout(() => res.classList.add('hidden'), 9000); }
+  function msg(m, ok){ DSH.toast(m, ok?'ok':'err'); }
 
   function refreshStatus(){
     fetch('/api/system/status').then(r=>r.json()).then(d=>{

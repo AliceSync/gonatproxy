@@ -167,6 +167,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/files/new", s.requireAuth(s.handleFileNew))
 	mux.HandleFunc("/api/files/mkdir", s.requireAuth(s.handleFileMkdir))
 	mux.HandleFunc("/api/files/delete", s.requireAuth(s.handleFileDelete))
+	mux.HandleFunc("/api/files/rename", s.requireAuth(s.handleFileRename))
 
 	// services
 	mux.HandleFunc("/services", s.requireAuth(s.handleServicesPage))

@@ -252,6 +252,52 @@ func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
+// handleFileRename renames a file or directory (new name is a bare name within
+// the same parent directory).
+func (s *Server) handleFileRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "post only", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := readBodyLimit(r, 64<<10)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	var req struct {
+		Path    string `json:"path"`
+		NewName string `json:"new_name"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	req.NewName = strings.TrimSpace(req.NewName)
+	if req.NewName == "" || strings.ContainsAny(req.NewName, "/\\") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "新名称不能包含路径分隔符且不能为空"})
+		return
+	}
+	oldAbs, err := s.resolvePath(req.Path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	newAbs, err := s.resolvePath(filepath.Join(filepath.Dir(oldAbs), req.NewName))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := os.Stat(newAbs); err == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "已存在同名 " + req.NewName})
+		return
+	}
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "renamed"})
+}
+
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")

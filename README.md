@@ -159,7 +159,7 @@ Flags: -config <path>   (默认为 config.json；可在子命令前后)
 - **配置**：所有路径字段（`cert_file`、`key_file`、`log_file`、控制台证书/私钥）都有
   **选择**按钮，会打开文件管理器选择模式，选中的服务器端文件会回填到字段里——
   证书等再也不用手打路径。另可填日志轮转上限/份数；删除路由/客户端/服务有确认对话框。
-- **文件**：文件管理器——浏览、跳转目录、新建/删除文件与目录、上传、下载、在线编辑文本。
+- **文件**：文件管理器——浏览、跳转目录、新建/删除**/重命名**文件与目录、上传（显示**实时进度与速度**）、下载、在线编辑文本。
 - **服务**：systemd 单元管理：
   - **生成/更新 unit 文件**：按服务器**当前可执行文件与配置路径**生成
     `deepseek-server.service` 并 `daemon-reload`，保证服务读取的配置与控制台完全一致；
@@ -231,8 +231,14 @@ sudo deepseek-natclient -config /etc/deepseek/natclient-<id>.json service start
 主机无需浏览器登录即可拉取文件；也可在页面上选择「暂用 insecure_skip_verify」批量改配置。
 二进制目录由配置 `deploy_dir` 指定（默认取 server 可执行文件同目录；留空自动探测）。
 
-> 部署助手依赖 `deploy_dir` 指向已经 `scripts/build.sh` 编译好的 deepseek-server/
-> client/natclient 三个二进制。
+- **架构选择**：页面上可选目标架构（`自动/amd64/arm64`）。`自动` 优先取服务器自身
+  架构，其次任一可用架构；明确指定架构时按 `deploy_dir/<bin>_linux_<arch>` 提供，
+  若该架构缺失则**报错**（列出现有架构），**不会**悄悄下发错误架构。请求形如
+  `/api/deploy/deepseek-client?arch=arm64`。
+- 二进制命名遵循 `scripts/build.sh` 输出：`deepseek-<server|client|natclient>_linux_<amd64|arm64>`。
+
+> 部署助手依赖 `deploy_dir` 指向已经 `scripts/build.sh` 编译好的（含 arm64/amd64
+> 两种架构的）deepseek-server/client/natclient 二进制。
 
 ## 安装为 systemd 服务
 

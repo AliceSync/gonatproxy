@@ -25,7 +25,7 @@
       点击【启动 start】时，程序会先<b>平滑关闭监听、释放端口</b>，再让 systemd 接管并启动，
       随后当前进程自动退出 —— 保证 systemd 服务读取的是<b>与控制台相同</b>的配置文件 <code id="handoffCfg"></code>。
     </div>
-    <div id="res" class="alert hidden"></div>
+
 
     <div class="cards" style="margin-top:6px">
       <div class="card"><div class="card-label">unit 文件</div><div class="card-value" id="svUnit" style="font-size:14px">-</div></div>
@@ -62,8 +62,7 @@
 <script src="/static/dialog.js"></script>
 <script>
 (function(){
-  const res = document.getElementById('res');
-  function msg(m, ok){ res.textContent=m; res.className='alert '+(ok?'alert-success':'alert-error'); res.classList.remove('hidden'); setTimeout(()=>res.classList.add('hidden'), ok?8000:12000); }
+  function msg(m, ok){ DSH.toast(m, ok?'ok':'err'); }
   function ctrl(act){
     fetch('/api/service/control?action='+act,{method:'POST'}).then(r=>r.json()).then(d=>{
       if(d.error){ msg(d.error, false); } else { msg(d.ok, true); if(d.restarting){ setTimeout(()=>location.reload(), 1800); } }

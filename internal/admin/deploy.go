@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -50,11 +51,74 @@ func (s *Server) handleDeployPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "deploy.html", map[string]any{"Enabled": s.DeployDir != ""})
 }
 
-func (s *Server) deployBinaryPath(slot string) string {
+var deployArchs = []string{"amd64", "arm64"}
+
+// archBinaryPath returns the common `<slot>_linux_<arch>` binary path.
+func (s *Server) archBinaryPath(slot, arch string) string {
 	if s.DeployDir == "" {
 		return ""
 	}
-	return filepath.Join(s.DeployDir, slot)
+	return filepath.Join(s.DeployDir, slot+"_linux_"+arch)
+}
+
+// availableArchs lists the architectures for which a deployable binary exists
+// for this slot. A plain `<slot>` (no arch suffix) counts as the server's own
+// architecture.
+func (s *Server) availableArchs(slot string) []string {
+	if s.DeployDir == "" {
+		return nil
+	}
+	got := []string{}
+	for _, a := range deployArchs {
+		if fileExists(s.archBinaryPath(slot, a)) {
+			got = append(got, a)
+		}
+	}
+	if len(got) == 0 && fileExists(filepath.Join(s.DeployDir, slot)) {
+		got = append(got, runtime.GOARCH)
+	}
+	return got
+}
+
+// resolveDeployFile picks the on-disk binary for a slot and architecture.
+// arch=="auto"/"" prefers the running server's own arch, then any available.
+// An explicit (unknown/missing) arch yields "" so the caller reports a clear
+// "architecture not available" error instead of silently serving a wrong arch.
+func (s *Server) resolveDeployFile(slot, arch string) string {
+	if s.DeployDir == "" {
+		return ""
+	}
+	if arch == "" || arch == "auto" {
+		visited := map[string]bool{}
+		order := append([]string{runtime.GOARCH}, deployArchs...)
+		for _, a := range order {
+			if visited[a] {
+				continue
+			}
+			visited[a] = true
+			if p := s.archBinaryPath(slot, a); fileExists(p) {
+				return p
+			}
+		}
+		return filepath.Join(s.DeployDir, slot) // plain fallback (may not exist)
+	}
+	// explicit arch: must be a known one AND present, otherwise error (no fallback)
+	if !containsStr(deployArchs, arch) {
+		return ""
+	}
+	if p := s.archBinaryPath(slot, arch); fileExists(p) {
+		return p
+	}
+	return ""
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleDeployStatus(w http.ResponseWriter, r *http.Request) {
@@ -66,10 +130,13 @@ func (s *Server) handleDeployStatus(w http.ResponseWriter, r *http.Request) {
 			server = cfg.Listen
 		}
 	}
-	bins := map[string]bool{}
+	bins := map[string][]string{}
+	all := map[string]bool{}
 	for _, slot := range []string{"deepseek-client", "deepseek-natclient", "deepseek-server"} {
-		p := s.deployBinaryPath(slot)
-		bins[slot] = p != "" && fileExists(p)
+		bins[slot] = s.availableArchs(slot)
+		for _, a := range bins[slot] {
+			all[a] = true
+		}
 	}
 	natIDs := []string{}
 	if cfg != nil {
@@ -77,12 +144,20 @@ func (s *Server) handleDeployStatus(w http.ResponseWriter, r *http.Request) {
 			natIDs = append(natIDs, id)
 		}
 	}
+	archs := []string{}
+	for _, a := range deployArchs {
+		if all[a] {
+			archs = append(archs, a)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":    s.DeployDir != "",
-		"deploy_dir": s.DeployDir,
-		"server":     server,
-		"binaries":   bins,
-		"nat_ids":    natIDs,
+		"enabled":     s.DeployDir != "",
+		"deploy_dir":  s.DeployDir,
+		"server":      server,
+		"archs":       archs,
+		"server_arch": runtime.GOARCH,
+		"binaries":    bins,
+		"nat_ids":     natIDs,
 	})
 }
 
@@ -220,9 +295,21 @@ func (s *Server) serveDeployBinary(w http.ResponseWriter, r *http.Request, name 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "config path is /api/deploy/cfg/..."})
 		return
 	}
-	p := s.deployBinaryPath(name)
+	// whitelist: only the three known binaries are ever served (blocks `..`
+	// path traversal out of deploy_dir via ?arch/name manipulation).
+	if !containsStr([]string{"deepseek-server", "deepseek-client", "deepseek-natclient"}, name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "未知的二进制 " + name})
+		return
+	}
+	arch := r.URL.Query().Get("arch")
+	p := s.resolveDeployFile(name, arch)
 	if p == "" || !fileExists(p) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("二进制 %q 未找到（deploy_dir=%s）", name, s.DeployDir)})
+		avail := s.availableArchs(name)
+		msg := fmt.Sprintf("二进制 %q (%s) 未找到；deploy_dir=%s", name, archOrAuto(arch), s.DeployDir)
+		if len(avail) > 0 {
+			msg += "；可用架构: " + strings.Join(avail, ", ")
+		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": msg})
 		return
 	}
 	f, err := os.Open(p)
@@ -233,11 +320,18 @@ func (s *Server) serveDeployBinary(w http.ResponseWriter, r *http.Request, name 
 	defer f.Close()
 	st, _ := f.Stat()
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filepath.Base(p)))
 	if st != nil {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", st.Size()))
 	}
 	_, _ = io.Copy(w, f)
+}
+
+func archOrAuto(a string) string {
+	if a == "" {
+		return "auto"
+	}
+	return a
 }
 
 // buildClientConfig returns a ready client.json (server per current config).

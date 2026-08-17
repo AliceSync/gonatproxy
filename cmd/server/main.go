@@ -328,7 +328,8 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 	// hot-swap the cert on save (no restart needed to pick up new cert paths).
 	cm := newCertManager(rt.scCertFile(), rt.scKeyFile())
 
-	adm := admin.New(cfgPath,
+	var adm *admin.Server
+	adm = admin.New(cfgPath,
 		func() *config.ServerConfig { return rt.getConfig() },
 		func(next *config.ServerConfig) error {
 			var err error
@@ -347,6 +348,10 @@ func run(sc *config.ServerConfig, cfgPath string, initMode bool) {
 					cmf, cmk = next.Admin.CertFile, next.Admin.KeyFile
 				}
 				cm.Update(cmf, cmk)
+				// Let a deploy_dir edit take effect immediately (no restart needed),
+				// so the 部署助手 picks up binaries right after you save the path.
+				adm.DeployDir = resolveDeployDir(next)
+				log.Printf("deploy_dir -> %s", adm.DeployDir)
 			}
 			return err
 		},

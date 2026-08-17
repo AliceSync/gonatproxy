@@ -80,4 +80,20 @@
   DSH.confirm = (message, o) => { o = o || {}; return open(Object.assign({}, o, { message: message })); };
   DSH.prompt  = (message, def, o) => { o = o || {}; return open(Object.assign({}, o, { message: message, input: def == null ? '' : String(def) })); };
   DSH.alert   = (message, o) => { o = o || {}; return open(Object.assign({}, o, { message: message, showCancel: false })); };
+
+  // Floating toast for operation feedback (visible no matter where the user
+  // scrolled). type: 'ok' | 'err' | 'warn' | 'info'; duration ms (0=auto).
+  let toastHost = null;
+  DSH.toast = function (message, type, duration) {
+    type = type || 'ok';
+    const map = { ok:'toast-ok', err:'toast-err', warn:'toast-warn', info:'toast-info' };
+    const t = document.createElement('div');
+    t.className = 'toast ' + (map[type] || map.ok);
+    t.textContent = message;
+    if (!toastHost) { toastHost = document.createElement('div'); toastHost.className='toast-container'; document.body.appendChild(toastHost); }
+    toastHost.appendChild(t);
+    const ms = duration > 0 ? duration : 3500;
+    setTimeout(function () { t.classList.add('toast-out'); setTimeout(function () { t.remove(); }, 260); }, ms);
+    return t;
+  };
 })();

@@ -193,8 +193,7 @@
   let newPassword = '';
   function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function msg(text, isErr) {
-    const a = $('#alert'); a.className = 'alert' + (isErr ? ' alert-error' : ' alert-success'); a.classList.remove('hidden'); a.textContent = text;
-    setTimeout(() => a.classList.add('hidden'), 4000);
+    DSH.toast(text, isErr ? 'err' : 'ok');
   }
 
   window.save = function () {

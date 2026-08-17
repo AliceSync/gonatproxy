@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -91,12 +92,39 @@ func main() {
 	}()
 
 	for {
-		err := runSession(&cc, tlsCfg)
-		if err != nil {
-			log.Printf("session ended: %v", err)
+		// Exponential backoff (with ±20% jitter) on rapid reconnects: after an
+		// outage the retry interval grows from the base up to a cap, and jitter
+		// plus the cap prevents a fleet of NAT hosts from thundering-herding the
+		// server with a burst of connections when the network recovers.
+		base := reconnect
+		delay := base
+		if delay < time.Second {
+			delay = time.Second
 		}
-		log.Printf("reconnecting in %s...", reconnect)
-		time.Sleep(reconnect)
+		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+		for {
+			start := time.Now()
+			err := runSession(&cc, tlsCfg)
+			if err != nil {
+				log.Printf("session ended: %v", err)
+			}
+			lived := time.Since(start)
+			if lived < 30*time.Second {
+				delay *= 2
+				if delay > 60*time.Second {
+					delay = 60 * time.Second
+				}
+			} else {
+				delay = base // healthy long-lived session → reset backoff
+			}
+			jitter := 1.0 + (rnd.Float64()-0.5)*0.4 // ±20%
+			wait := time.Duration(float64(delay) * jitter)
+			if wait < time.Second {
+				wait = time.Second
+			}
+			log.Printf("reconnecting in %s (backoff %.0fs)...", wait, delay.Seconds())
+			time.Sleep(wait)
+		}
 	}
 }
 

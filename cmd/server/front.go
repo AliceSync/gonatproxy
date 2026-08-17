@@ -87,13 +87,29 @@ func (s *sharedListener) loop() {
 	}
 }
 
+// maxPendingHandshakes bounds how many TLS handshakes run at once, so a flood
+// of half-open/incomplete connections can't exhaust cgroups/fd/goroutine limits.
+var handshakeSem = make(chan struct{}, maxPendingHandshakes)
+
+const maxPendingHandshakes = 256
+
 func (s *sharedListener) route(conn net.Conn) {
+	// acquire a handshake slot; drop the connection if saturated
+	select {
+	case handshakeSem <- struct{}{}:
+	case <-s.ctx.Done():
+		conn.Close()
+		return
+	}
 	tc := tls.Server(conn, s.tlsCfg)
 	tc.SetDeadline(time.Now().Add(10 * time.Second))
 	if err := tc.Handshake(); err != nil {
 		tc.Close()
+		<-handshakeSem
 		return
 	}
+	<-handshakeSem // handshake done; free the slot before routing
+
 	br := bufio.NewReaderSize(tc, 32*1024)
 	// Distinguish HTTP vs relay by the FIRST application byte: HTTP requests
 	// begin with an ASCII method letter (G/P/H/O/D/T/C/U); the relay's first

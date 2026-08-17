@@ -93,12 +93,15 @@
     return `#!/usr/bin/env bash
 set -euo pipefail
 # DeepSeek 部署助手生成 · 请在目标主机以 root 执行
+# 断网自动重试(最多5次/间隔4s)与超时，避免反复创建连接或卡死。
+# 部署令牌 15 分钟有效；若重试后仍失败，重新在服务器上生成命令即可拿到新令牌。
+TOK='__DEPLOY_TOKEN__'
 ${mkdir}
-# 1) 下载二进制
-curl -fkS -H "Authorization: Bearer TOK" -o /usr/local/bin/${binName} "${binURL}"
+# 1) 下载二进制（断网自动重试，最多5次/间隔4s；附超时防止卡死）
+curl -fkS --retry 5 --retry-delay 4 --retry-all-errors --connect-timeout 10 --max-time 900 -H "Authorization: Bearer $TOK" -o /usr/local/bin/${binName} "${binURL}"
 chmod +x /usr/local/bin/${binName}
 # 2) 下载配置
-curl -fkS -H "Authorization: Bearer TOK" -o ${cfgPath} "${cfgURL}"
+curl -fkS --retry 5 --retry-delay 4 --retry-all-errors --connect-timeout 10 --max-time 120 -H "Authorization: Bearer $TOK" -o ${cfgPath} "${cfgURL}"
 ${sedLine}
 # 3) 生成并启用、启动 systemd 单元（enable 与 start 分开）
 /usr/local/bin/${binName} -config ${cfgPath} service install
@@ -111,7 +114,7 @@ ${sedLine}
     const preId = role==='client'?'cmdClient':'cmdNat';
     // replace placeholder TOK with a fresh token
     token().then(tk=>{
-      document.getElementById(preId).textContent = cmd.replace(/\bTOK\b/, tk).trimEnd();
+      document.getElementById(preId).textContent = cmd.replace(/__DEPLOY_TOKEN__/g, tk).trimEnd();
     }).catch(e=>{ document.getElementById(preId).textContent='获取令牌失败: '+e; });
   };
   document.querySelectorAll('pre').forEach(p=>{ p.style.cursor='pointer'; p.title='点击复制'; p.addEventListener('click',function(){ if(!this.textContent.trim())return; navigator.clipboard && navigator.clipboard.writeText(this.textContent); }); });

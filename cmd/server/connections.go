@@ -10,6 +10,12 @@ import (
 	"deepseekaiworker/internal/mux"
 )
 
+// registerTimeout bounds how long a freshly-TLS'd connection may take to send
+// its REGISTER frame before being dropped, so idle/broken connections can't
+// hold goroutines + file descriptors open indefinitely (resource-exhaustion
+// hardening under connection churn / spoofed floods).
+const registerTimeout = 20 * time.Second
+
 // handleConnection establishes a mux, reads the client's REGISTER, and directs
 // it to entry or NAT handling.
 func handleConnection(conn net.Conn, rt *runtime) {
@@ -19,12 +25,16 @@ func handleConnection(conn net.Conn, rt *runtime) {
 		log.Printf("client disconnected: %s", client)
 	}()
 
+	// Fail fast if the peer never sends a REGISTER (e.g. a bare TCP/TLS probe).
+	_ = conn.SetReadDeadline(time.Now().Add(registerTimeout))
+
 	m := mux.Dial(conn)
 	regBytes, err := m.Register()
 	if err != nil {
 		log.Printf("client %s: no register frame: %v", client, err)
 		return
 	}
+	_ = conn.SetDeadline(time.Time{}) // clear: the session is now long-lived
 	reg, err := mux.DecodeRegister(regBytes)
 	if err != nil {
 		log.Printf("client %s: bad register: %v", client, err)

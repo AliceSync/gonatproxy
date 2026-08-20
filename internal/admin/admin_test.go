@@ -1,9 +1,14 @@
 package admin
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -300,6 +305,166 @@ func TestDeployConfigBuilders(t *testing.T) {
 	}
 	if _, err := s.buildNATConfig("nonexistent", ""); err == nil {
 		t.Fatal("expected error for unknown nat id")
+	}
+}
+
+// TestTemplatesRenderSPA verifies every console page still renders and carries
+// the SPA markers (view container, router script, favicon) added by the
+// single-page-app modernization.
+func TestTemplatesRenderSPA(t *testing.T) {
+	s, _ := newTestServer()
+	cfg := s.GetConfig()
+	cfg.Routes = []config.Route{{Name: "d", ListenPort: 5051, Target: "127.0.0.1:8000"}}
+	cfg.Clients["nat1"] = &config.NatClient{Secret: "s", Services: []config.Service{{Name: "web", Port: 8080}}}
+	svc := ServiceInspect{Unit: "deepseek-server.service", Config: cfgPathTest}
+
+	repo := []struct {
+		name   string
+		data   map[string]any
+		hasSPA bool
+	}{
+		{"dashboard.html", map[string]any{"Config": cfg, "Svc": svc}, true},
+		{"config.html", map[string]any{"Config": cfg}, true},
+		{"files.html", map[string]any{"SelectMode": false}, true},
+		{"deploy.html", map[string]any{}, true},
+		{"services.html", map[string]any{"Config": cfg}, true},
+		{"system.html", map[string]any{"Version": "test"}, true},
+		{"login.html", map[string]any{}, false},
+		{"setup.html", map[string]any{}, false},
+	}
+	for _, tc := range repo {
+		rec := httptest.NewRecorder()
+		s.render(rec, tc.name, tc.data)
+		if rec.Code != 0 && rec.Code != http.StatusOK {
+			t.Fatalf("%s unexpected status %d", tc.name, rec.Code)
+		}
+		body := rec.Body.String()
+		if body == "" {
+			t.Fatalf("%s rendered empty", tc.name)
+		}
+		if tc.hasSPA {
+			for _, marker := range []string{`id="view"`, `/static/app.js`, `/static/favicon.svg`} {
+				if !strings.Contains(body, marker) {
+					t.Errorf("%s missing marker %q", tc.name, marker)
+				}
+			}
+		} else if strings.Contains(body, `id="view"`) {
+			t.Errorf("%s should not be an SPA page", tc.name)
+		}
+	}
+}
+
+const cfgPathTest = "/tmp/test-server.json"
+
+// TestServerHTTPIntegration spins up the real console HTTP server and exercises
+// login → page → static asset → SSE, over a real TCP listener with a cookie jar,
+// to validate the SPA assets are actually served and the SSE stream works
+// end-to-end through the production handler stack.
+func TestServerHTTPIntegration(t *testing.T) {
+	ph, _ := HashPassword("pw12345678")
+	cur := &config.ServerConfig{
+		Listen: "127.0.0.1:0",
+		Admin:  &config.Admin{Listen: "127.0.0.1:0", Username: "admin", PasswordHash: ph},
+	}
+	s := New("/tmp/test-server.json",
+		func() *config.ServerConfig { return cur },
+		func(n *config.ServerConfig) error { cur = n; return nil },
+		func() error { return nil },
+	)
+	s.Hooks = &SystemHooks{Metrics: func() ConnMetrics {
+		return ConnMetrics{Entry: 2, Nat: 1, Total: 3, Up: 11, Down: 22}
+	}}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.RunPlainOn(ctx, ln)
+	base := "http://" + ln.Addr().String()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	// login (AJAX) gets a session cookie + JSON redirect target
+	resp, err := client.PostForm(base+"/login", url.Values{"username": {"admin"}, "password": {"pw12345678"}})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status %d", resp.StatusCode)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	// dashboard page contains SPA markers
+	p, err := client.Get(base + "/dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(p.Body)
+	p.Body.Close()
+	for _, m := range []string{`id="view"`, `/static/app.js`, `/api/metrics/stream`} {
+		if !strings.Contains(string(b), m) {
+			t.Errorf("dashboard missing %q", m)
+		}
+	}
+
+	// static assets served with correct content types
+	for url_, ct := range map[string]string{"/static/app.js": "application/javascript", "/static/favicon.svg": "image/svg+xml"} {
+		r2, _ := client.Get(base + url_)
+		if r2.StatusCode != http.StatusOK || !strings.HasPrefix(r2.Header.Get("Content-Type"), ct) {
+			t.Errorf("%s -> %d / %s", url_, r2.StatusCode, r2.Header.Get("Content-Type"))
+		}
+		io.Copy(io.Discard, r2.Body)
+		r2.Body.Close()
+	}
+
+	// SSE stream: read first data frame then close
+	ssereq, _ := http.NewRequest("GET", base+"/api/metrics/stream", nil)
+	sseResp, err := client.Do(ssereq)
+	if err != nil {
+		t.Fatalf("sse connect: %v", err)
+	}
+	defer sseResp.Body.Close()
+	if sseResp.StatusCode != http.StatusOK || sseResp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("sse headers: %d %q", sseResp.StatusCode, sseResp.Header.Get("Content-Type"))
+	}
+	rd := bufio.NewReader(sseResp.Body)
+	line := ""
+	for i := 0; i < 200; i++ {
+		l, _ := rd.ReadString('\n')
+		line += l
+		if strings.TrimSpace(l) == "" { // blank line ends event
+			break
+		}
+	}
+	if !strings.Contains(line, `"total":3`) {
+		t.Fatalf("sse body: %q", line)
+	}
+}
+
+// one or more JSON `data:` frames and honours client disconnect.
+func TestMetricsStreamSSE(t *testing.T) {
+	s, _ := newTestServer()
+	s.Hooks = &SystemHooks{Metrics: func() ConnMetrics {
+		return ConnMetrics{Entry: 2, Nat: 1, Total: 3, Up: 1024, Down: 2048}
+	}}
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", "/api/metrics/stream", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); s.handleMetricsStream(rec, req) }()
+	time.Sleep(80 * time.Millisecond) // let the first event flush
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	if rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(body, "data: ") || !strings.Contains(body, `"total":3`) || !strings.Contains(body, `"up":1024`) {
+		t.Fatalf("SSE body missing expected metrics: %q", body)
 	}
 }
 

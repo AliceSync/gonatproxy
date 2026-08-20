@@ -245,25 +245,48 @@
 
   // --- file selector modal ---
   let fsField = '';
+  // Ensure the modal exists in the DOM. Under SPA navigation only <main id="view">
+  // is swapped, and this modal lives outside it, so create it lazily if missing
+  // (idempotent — never duplicates when re-initialising the page).
+  function ensureFsModal() {
+    let m = document.getElementById('fsModal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.className = 'fs-bg';
+    m.id = 'fsModal';
+    m.innerHTML =
+      '<div class="fs-frame">' +
+        '<div class="fs-top"><strong id="fsTitle">选择文件</strong><button type="button" class="btn btn-ghost btn-sm" onclick="closeFs()">关闭</button></div>' +
+        '<iframe class="fs-iframe" id="fsIframe"></iframe>' +
+      '</div>';
+    document.body.appendChild(m);
+    return m;
+  }
   window.pickFile = function (field) {
     fsField = field;
-    const modal = document.getElementById('fsModal');
+    const modal = ensureFsModal();
     document.getElementById('fsTitle').textContent = '选择文件 -> ' + field;
     document.getElementById('fsIframe').src = '/files?select=1&field=' + field;
     modal.classList.add('open');
   };
   window.closeFs = function () {
-    document.getElementById('fsModal').classList.remove('open');
+    const modal = document.getElementById('fsModal');
+    if (!modal) return;
+    modal.classList.remove('open');
     document.getElementById('fsIframe').src = 'about:blank';
   };
-  window.addEventListener('message', function (ev) {
-    if (ev.data && ev.data.type === 'fileSelect') {
-      // fill the matching input[data-f]
-      const inp = document.querySelector('input[data-f="' + ev.data.field + '"]');
-      if (inp) { inp.value = ev.data.path; }
-      window.closeFs();
-    }
-  });
+  // Bind the global postMessage listener only once (SPA swaps re-run this file).
+  if (!window.__cfgMsgBound) {
+    window.__cfgMsgBound = true;
+    window.addEventListener('message', function (ev) {
+      if (ev.data && ev.data.type === 'fileSelect') {
+        // fill the matching input[data-f]
+        const inp = document.querySelector('input[data-f="' + ev.data.field + '"]');
+        if (inp) { inp.value = ev.data.path; }
+        window.closeFs();
+      }
+    });
+  }
 
   // set forward-reference for admin fields handled in readBasic
   loadConfig();

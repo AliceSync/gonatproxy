@@ -197,8 +197,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/service/generate", s.requireAuth(s.handleServiceGenerate))
 	mux.HandleFunc("/api/service/control", s.requireAuth(s.handleServiceControl))
 
-	// live metrics
+	// live metrics (one-shot pull + SSE push)
 	mux.HandleFunc("/api/metrics", s.requireAuth(s.handleMetrics))
+	mux.HandleFunc("/api/metrics/stream", s.requireAuth(s.handleMetricsStream))
 
 	// system / update
 	mux.HandleFunc("/system", s.requireAuth(s.handleSystemPage))
@@ -302,6 +303,8 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css")
 	case strings.HasSuffix(path, ".js"):
 		w.Header().Set("Content-Type", "application/javascript")
+	case strings.HasSuffix(path, ".svg"):
+		w.Header().Set("Content-Type", "image/svg+xml")
 	default:
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}

@@ -5,11 +5,14 @@ package admin
 // host-provided Hooks.
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // systemdActive reports whether the console is running under a live systemd.
@@ -305,10 +308,62 @@ func boolStr(b bool) string {
 }
 
 // handleMetrics returns the live connection/bandwidth snapshot for the dashboard.
+// It doubles as a one-shot pull endpoint (kept for compatibility / probing).
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if h := s.hooks(); h != nil && h.Metrics != nil {
 		writeJSON(w, http.StatusOK, h.Metrics())
 		return
 	}
 	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "metrics not available"})
+}
+
+// handleMetricsStream pushes live metrics to the dashboard over Server-Sent
+// Events (SSE), replacing per-second client polling. Each second (and once on
+// connect) it emits a ConnMetrics snapshot as a `data:` event. It stays open
+// until the client disconnects (EventSource reconnects automatically).
+func (s *Server) handleMetricsStream(w http.ResponseWriter, r *http.Request) {
+	h := s.hooks()
+	if h == nil || h.Metrics == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "metrics not available"})
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Send an immediate snapshot so the dashboard paints before the first tick.
+	if writeMetricEvent(w, h.Metrics()) != nil {
+		return
+	}
+	fl.Flush()
+
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-t.C:
+			if writeMetricEvent(w, h.Metrics()) != nil {
+				return
+			}
+			fl.Flush()
+		}
+	}
+}
+
+// writeMetricEvent writes one SSE `data:` frame for a metrics snapshot.
+func writeMetricEvent(w http.ResponseWriter, m ConnMetrics) error {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "data: %s\n\n", b)
+	return err
 }

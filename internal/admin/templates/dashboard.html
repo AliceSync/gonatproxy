@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DeepSeek Tunnel 控制台</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script src="/static/app.js"></script>
 </head>
 <body>
   <nav class="navbar">
@@ -18,7 +20,7 @@
       <a href="/logout">退出</a>
     </div>
   </nav>
-  <main class="container">
+  <main class="container" id="view">
     <h2>服务概览</h2>
     <p class="muted">管理入口与隧道服务状态</p>
 
@@ -41,7 +43,7 @@
     </div>
 
     <section class="panel">
-      <h3>实时指标（每秒刷新）</h3>
+      <h3>实时指标 <span class="muted" style="font-weight:400;font-size:13px">（SSE 实时推送）</span></h3>
       <div class="cards" style="margin-top:8px">
         <div class="card"><div class="card-label">总连接数</div><div class="card-value"><span id="mTotal">-</span></div></div>
         <div class="card"><div class="card-label">入口客户端</div><div class="card-value" id="mEntry">-</div></div>
@@ -57,24 +59,31 @@
       var cur = []; // last N total-bps samples
       function fmt(b){ if(b>=1048576) return (b/1048576).toFixed(2)+' MB/s'; if(b>=1024) return (b/1024).toFixed(1)+' KB/s'; return b+' B/s'; }
       function draw(){
-        var svg=document.getElementById('spark'); if(cur.length<2){svg.innerHTML='';return;}
+        var svg=document.getElementById('spark'); if(!svg) return;
+        if(cur.length<2){svg.innerHTML='';return;}
         var w=svg.clientWidth||600, h=64, max=Math.max.apply(null,cur)||1;
         var pts=cur.map(function(v,i){ var x=i/(cur.length-1)*w; var y=h-(v/max)*(h-6)-3; return x.toFixed(1)+','+y.toFixed(1); }).join(' ');
         svg.innerHTML='<polyline fill="none" stroke="#4fd1a3" stroke-width="1.5" points="'+pts+'"/>';
       }
-      function tick(){
-        fetch('/api/metrics').then(r=>r.json()).then(d=>{
-          document.getElementById('mTotal').textContent=d.total;
-          document.getElementById('mEntry').textContent=d.entry;
-          document.getElementById('mNat').textContent=d.nat;
-          document.getElementById('mUp').textContent=fmt(d.up||0);
-          document.getElementById('mDown').textContent=fmt(d.down||0);
-          document.getElementById('mTotalTp').textContent='总吞吐：' + fmt((d.up||0)+(d.down||0));
-          cur.push((d.up||0)+(d.down||0)); if(cur.length>60) cur.shift();
-          draw();
-        }).catch(()=>{});
+      function apply(d){
+        var setT=function(id,v){ var el=document.getElementById(id); if(el) el.textContent=v; };
+        setT('mTotal', d.total);
+        setT('mEntry', d.entry);
+        setT('mNat', d.nat);
+        setT('mUp', fmt(d.up||0));
+        setT('mDown', fmt(d.down||0));
+        setT('mTotalTp', '总吞吐：' + fmt((d.up||0)+(d.down||0)));
+        cur.push((d.up||0)+(d.down||0)); if(cur.length>60) cur.shift();
+        draw();
       }
-      tick(); setInterval(tick,1000);
+      // SSE push: the server streams a snapshot every second (and on connect),
+      // so the dashboard needs no per-second polling. EventSource reconnects on
+      // its own; we close it only when navigating away (see DSHNav.onLeave).
+      var es = new EventSource('/api/metrics/stream');
+      es.onmessage = function(ev){ try{ apply(JSON.parse(ev.data)); }catch(_){ } };
+      if (window.DSHNav) {
+        DSHNav.onLeave(function(){ try{ es.close(); }catch(_){ } });
+      }
       window.addEventListener('resize', draw);
     })();
     </script>

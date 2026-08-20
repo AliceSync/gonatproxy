@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文件管理 - DeepSeek Tunnel</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script src="/static/app.js"></script>
 </head>
 <body>
   <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
@@ -13,7 +15,7 @@
       <a href="/deploy">部署</a><a href="/services">服务</a><a href="/system">系统</a><a href="/logout">退出</a>
     </div>
   </nav>
-  <main class="container">
+  <main class="container" id="view">
     <div class="page-head">
       <h2>文件管理器</h2>
       {{if .SelectMode}}<div class="muted">选择模式：点击<b>文件</b>填入 <code>{{.Field}}</code>；进入目录后点<b>「选取当前目录」</b>可填入目录。</div>

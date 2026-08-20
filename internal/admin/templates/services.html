@@ -5,13 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>服务管理 - DeepSeek Tunnel</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script src="/static/app.js"></script>
 </head>
 <body>
   <nav class="navbar"><div class="nav-brand">◈ DeepSeek Tunnel</div>
     <div class="nav-links"><a href="/dashboard">概览</a><a href="/config">配置</a><a href="/files">文件</a>
       <a href="/deploy">部署</a><a href="/services" class="active">服务</a><a href="/system">系统</a><a href="/logout">退出</a></div>
   </nav>
-  <main class="container">
+  <main class="container" id="view">
     <div class="page-head">
       <h2>服务管理</h2>
       <span class="muted" id="modeLabel">加载中…</span>

@@ -1,7 +1,9 @@
 // File manager JS (vanilla). In select mode, clicking a file posts the absolute
 // path to the parent window/postMessage target so the config page can fill it.
 (function () {
-  let cur = '/';
+  // Remember the current directory across SPA swaps (this file is re-run on each
+  // visit, so persist state on window rather than in a per-run closure).
+  let cur = window.__filesCur || '/';
   const select = new URLSearchParams(location.search).get('select') === '1';
   const field = new URLSearchParams(location.search).get('field') || '';
   const listBody = document.getElementById('listBody');
@@ -17,6 +19,7 @@
 
   function render(data) {
     cur = data.path;
+    window.__filesCur = cur;
     // breadcrumb: root '/' then each segment; the CSS adds the '/' separators
     breadcrumb.innerHTML = '<a href="#" data-p="/">/</a>';
     data.crumbs.forEach(c => {
@@ -85,14 +88,17 @@
 
   function load(p){ fetch('/api/files/list?path='+encodeURIComponent(p)).then(r=>r.json()).then(d=>{ if(d.error){showErr(d.error);return;} render(d); }).catch(e=>showErr('加载失败')); }
 
-  // editor modal
-  const modal = document.createElement('div'); modal.className='modal-bg hidden';
-  modal.innerHTML = `<div class="modal">
+  // editor modal (create once; SPA swaps re-run this file so guard by id)
+  let modal = document.getElementById('edShell');
+  if (!modal) {
+    modal = document.createElement('div'); modal.className='modal-bg hidden'; modal.id='edShell';
+    modal.innerHTML = `<div class="modal">
       <div class="modal-head"><strong id="edTitle">编辑</strong><button class="btn btn-ghost btn-sm" onclick="document.querySelector('.modal-bg').classList.add('hidden')">关闭</button></div>
       <textarea id="edContent" class="ed-content"></textarea>
       <div class="modal-foot"><button class="btn btn-primary" id="edSave">保存</button></div>
     </div>`;
-  document.body.appendChild(modal);
+    document.body.appendChild(modal);
+  }
   function editFile(path){
     fetch('/api/files/read?path='+encodeURIComponent(path)).then(r=>r.json()).then(d=>{
       document.getElementById('edTitle').textContent = path;

@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"deepseekaiworker/internal/admin"
@@ -123,7 +122,7 @@ func forkSelf(exe string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), "DEEPSEEK_RESTARTED=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setDetachedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

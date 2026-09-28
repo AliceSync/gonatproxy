@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"syscall"
 
 	"deepseekaiworker/internal/config"
 )
@@ -53,7 +52,7 @@ func daemonize(cfgPath string, cfg *config.ServerConfig, missing bool) {
 		fmt.Sprintf("DEEPSEEK_LOG_MAX=%d", maxBytes),
 		fmt.Sprintf("DEEPSEEK_LOG_FILES=%d", maxFiles),
 	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setDetachedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("daemonize: start: %v", err)
 	}
